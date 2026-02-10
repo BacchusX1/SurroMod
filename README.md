@@ -2,11 +2,6 @@
 
 A visual workflow builder for creating and validating machine learning surrogate models (SciKit-Learn and PyTorch).
 
-
-## Very bad illustration from a few evan wors prompts:
-![SurroMod Workflow Illustration](./doc/screenshots/dummy.png)
-
-
 ## Purpose
 
 Build ML pipelines through a drag-and-drop canvas interface. Train regressors and classifiers on diverse data types — 3D field data from simulations, CAD geometries, images, time series, scalars — then validate and analyze relationships without or with writing code.
@@ -25,6 +20,9 @@ Build ML pipelines through a drag-and-drop canvas interface. Train regressors an
 - **types.ts, store.ts**: Type definitions and state management
 - **api.ts, utils.ts**: Backend communication and helper functions
 - **styles.css**: Application styling
+
+## This is a very bad illustration generated from a few even worse prompts:
+![SurroMod Workflow Illustration](./doc/screenshots/dummy.png)
 
 ## Workflow
 
