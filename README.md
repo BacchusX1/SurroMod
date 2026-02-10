@@ -4,7 +4,7 @@ A visual workflow builder for creating and validating machine learning surrogate
 
 
 ## Very bad illustration from a few evan wors prompts:
-![SurroMod Workflow Illustration](dummy.png)
+![SurroMod Workflow Illustration](./doc/screenshots/dummy.png)
 
 
 ## Purpose
