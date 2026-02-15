@@ -1,0 +1,381 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   SurroMod – Global Styles
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface-2: #242836;
+  --border: #2e3347;
+  --text: #e4e6f0;
+  --text-dim: #8b8fa4;
+  --accent: #6366f1;
+  --danger: #ef4444;
+  --radius: 8px;
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ─── App layout ─────────────────────────────────────────────────────────── */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.app__logo {
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.app__subtitle {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.app__main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ─── Canvas container (sidebar + flow) ──────────────────────────────────── */
+
+.canvas-container {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.canvas-wrapper {
+  flex: 1;
+  height: 100%;
+}
+
+/* ─── Sidebar ────────────────────────────────────────────────────────────── */
+
+.sidebar {
+  width: 240px;
+  min-width: 240px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 12px 0;
+}
+
+.sidebar__title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  padding: 4px 16px 12px;
+}
+
+.sidebar__group {
+  margin-bottom: 4px;
+}
+
+.sidebar__group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  border-left: 3px solid transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.sidebar__group-header:hover {
+  background: var(--surface-2);
+}
+
+.sidebar__chevron {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.sidebar__items {
+  padding: 2px 0;
+}
+
+.sidebar__item {
+  padding: 7px 16px 7px 24px;
+  font-size: 0.8rem;
+  cursor: grab;
+  border-left: 3px solid transparent;
+  transition: background 0.15s;
+  user-select: none;
+}
+
+.sidebar__item:hover {
+  background: var(--surface-2);
+}
+
+.sidebar__item:active {
+  cursor: grabbing;
+}
+
+/* ─── Custom Nodes ───────────────────────────────────────────────────────── */
+
+.surro-node {
+  min-width: 170px;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font);
+  font-size: 0.8rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+.surro-node.selected {
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.5), 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.surro-node__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: #000;
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+
+.surro-node__icon {
+  font-size: 1rem;
+}
+
+.surro-node__title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.surro-node__body {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.surro-node__tag {
+  display: inline-block;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  width: fit-content;
+}
+
+.surro-node__detail {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}
+
+/* Handles */
+
+.surro-handle {
+  width: 10px !important;
+  height: 10px !important;
+  background: var(--accent) !important;
+  border: 2px solid var(--surface) !important;
+}
+
+/* ─── Inspector ──────────────────────────────────────────────────────────── */
+
+.inspector {
+  width: 280px;
+  min-width: 280px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.inspector--empty {
+  justify-content: center;
+  align-items: center;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 20px;
+}
+
+.inspector__header {
+  padding: 14px 16px;
+  border-bottom: 3px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.inspector__header h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.inspector__badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #000;
+}
+
+.inspector__body {
+  flex: 1;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.inspector__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inspector__field span {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.inspector__field input,
+.inspector__field select {
+  padding: 7px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-family: var(--font);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.inspector__field input:focus,
+.inspector__field select:focus {
+  border-color: var(--accent);
+}
+
+.inspector__actions {
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+}
+
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
+
+.btn {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn:hover {
+  background: var(--border);
+}
+
+.btn--danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.btn--danger:hover {
+  background: #dc2626;
+}
+
+/* ─── React Flow overrides ───────────────────────────────────────────────── */
+
+.react-flow__pane {
+  background: var(--bg) !important;
+}
+
+.react-flow__edge-path {
+  stroke: var(--border) !important;
+  stroke-width: 2px !important;
+}
+
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke: var(--accent) !important;
+}
+
+.react-flow__controls {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2) !important;
+}
+
+.react-flow__controls-button {
+  background: var(--surface) !important;
+  border-bottom: 1px solid var(--border) !important;
+  fill: var(--text-dim) !important;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--surface-2) !important;
+}
+
+.react-flow__minimap {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+}
