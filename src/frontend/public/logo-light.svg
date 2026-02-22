@@ -1,0 +1,71 @@
+<svg width="720" height="200" viewBox="0 0 720 200" xmlns="http://www.w3.org/2000/svg">
+
+  <defs>
+    <linearGradient id="gradientCurve" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0F172A"></stop>
+      <stop offset="100%" stop-color="#2563EB"></stop>
+    </linearGradient>
+
+    <linearGradient id="gradientFill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2563EB" stop-opacity="0.3"></stop>
+      <stop offset="100%" stop-color="#0F172A" stop-opacity="0"></stop>
+    </linearGradient>
+
+    <style>
+      .model-curve {
+        fill: none;
+        stroke: url(#gradientCurve);
+        stroke-width: 3;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .model-area {
+        fill: url(#gradientFill);
+      }
+
+      .data-point {
+        fill: #0F172A;
+      }
+
+      .brand-text {
+        font-family: system-ui, -apple-system, sans-serif;
+        font-weight: 500;
+        font-size: 46px;
+        letter-spacing: 1.5px;
+        fill: #0F172A;
+      }
+    </style>
+  </defs>
+
+  <!-- Trainingsdatenpunkte -->
+  <circle class="data-point" cx="60" cy="120" r="4"></circle>
+  <circle class="data-point" cx="120" cy="80" r="4"></circle>
+  <circle class="data-point" cx="180" cy="150" r="4"></circle>
+  <circle class="data-point" cx="240" cy="100" r="4"></circle>
+  <circle class="data-point" cx="300" cy="130" r="4"></circle>
+  <circle class="data-point" cx="360" cy="90" r="4"></circle>
+  <circle class="data-point" cx="420" cy="120" r="4"></circle>
+  <circle class="data-point" cx="480" cy="80" r="4"></circle>
+  <circle class="data-point" cx="540" cy="140" r="4"></circle>
+  <circle class="data-point" cx="600" cy="100" r="4"></circle>
+
+  <!-- Modellfläche unter der Kurve -->
+  <path class="model-area" d="
+    M 50 140
+    C 120 80, 240 160, 360 90
+    C 480 40, 600 140, 670 100
+    L 670 180
+    L 50 180
+    Z
+  "></path>
+
+  <!-- Modellkurve -->
+  <path class="model-curve" d="M 50 140
+           C 120 80, 240 160, 360 90
+           C 480 40, 600 140, 670 100"></path>
+
+  <!-- Produktname -->
+  <text class="brand-text" x="50" y="195">SurroMod</text>
+
+</svg>
