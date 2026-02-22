@@ -1,0 +1,121 @@
+/**
+ * api.ts – backend communication helpers.
+ */
+
+import type { SurroNode, SurroEdge } from './types';
+
+const API_BASE = 'http://localhost:8000';
+
+/** (stub) Submit the current pipeline to the backend for execution */
+export async function submitPipeline(
+  _nodes: SurroNode[],
+  _edges: SurroEdge[],
+): Promise<{ status: string }> {
+  console.log('[api] submitPipeline – no backend connected yet', API_BASE);
+  return { status: 'offline' };
+}
+
+/** (stub) Load a saved pipeline from the backend */
+export async function loadPipeline(
+  _id: string,
+): Promise<{ nodes: SurroNode[]; edges: SurroEdge[] } | null> {
+  console.log('[api] loadPipeline – no backend connected yet');
+  return null;
+}
+
+// ─── File upload ────────────────────────────────────────────────────────────
+
+export interface UploadResult {
+  ok: boolean;
+  fileId?: string;
+  originalName?: string;
+  columns?: string[];
+  error?: string;
+}
+
+/**
+ * Upload a data file (e.g. CSV) to the backend.
+ * Returns the upload ID and detected column names.
+ */
+export async function uploadFile(file: File): Promise<UploadResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await fetch('/api/upload', {
+    method: 'POST',
+    body: formData,
+  });
+
+  return res.json();
+}
+
+// ─── Workflow save / load ───────────────────────────────────────────────────
+
+export interface WorkflowSaveResult {
+  ok: boolean;
+  fileId?: string;
+  path?: string;
+  error?: string;
+}
+
+/**
+ * Save the current workflow (nodes, edges, name) to the backend as a pickle.
+ * Data files referenced by Input nodes are bundled automatically.
+ */
+export async function saveWorkflow(
+  name: string,
+  nodes: { id: string; type?: string; data: Record<string, unknown> }[],
+  edges: { source: string; target: string }[],
+): Promise<WorkflowSaveResult> {
+  const res = await fetch('/api/workflow/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, nodes, edges }),
+  });
+  return res.json();
+}
+
+/**
+ * Download a saved workflow pickle by file ID.
+ * Returns a Blob the caller can save with a file-save dialog.
+ */
+export async function downloadWorkflow(fileId: string): Promise<Blob> {
+  const res = await fetch(`/api/workflow/download/${encodeURIComponent(fileId)}`);
+  return res.blob();
+}
+
+export interface WorkflowLoadResult {
+  ok: boolean;
+  name?: string;
+  nodes?: { id: string; type?: string; data: Record<string, unknown> }[];
+  edges?: { source: string; target: string }[];
+  error?: string;
+}
+
+/**
+ * Upload a workflow pickle file and restore it.
+ */
+export async function loadWorkflowFile(file: File): Promise<WorkflowLoadResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await fetch('/api/workflow/load', {
+    method: 'POST',
+    body: formData,
+  });
+  return res.json();
+}
+
+export interface WorkflowListResult {
+  ok: boolean;
+  workflows?: { fileId: string; name: string }[];
+  error?: string;
+}
+
+/**
+ * List all saved workflows on the server.
+ */
+export async function listWorkflows(): Promise<WorkflowListResult> {
+  const res = await fetch('/api/workflow/list');
+  return res.json();
+}

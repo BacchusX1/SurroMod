@@ -1,0 +1,27 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# SurroMod – Test Configuration
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Each workflow file in test/test_workflows/ has an entry here.
+# For every model that is trained independently in the workflow,
+# a minimum R² threshold is specified.  The test suite asserts that
+# *every* model meets or exceeds its R² barrier.
+#
+# Model order follows the deterministic topological-sort execution order
+# of the pipeline (i.e. the order produced by the backend).
+# ───────────────────────────────────────────────────────────────────────────
+
+workflows:
+
+  scaler_mlp_5817b00b.pkl:
+    description: >
+      Concrete-strength dataset with three parallel branches:
+      MinMax → MLP,  Standard → MLP,  LogTransform → MLP.
+      All three models feed into a single Regressor Validator.
+    models:
+      - name: "MLP-minmax"                # MinMax scaler path
+        min_r2: 0.9
+      - name: "MLP-standard"                # Standard scaler path
+        min_r2: 0.9
+      - name: "MLP-log"                # LogTransform scaler path
+        min_r2: 0.65
