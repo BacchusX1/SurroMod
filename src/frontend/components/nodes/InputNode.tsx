@@ -18,7 +18,8 @@ export default function InputNode({ id, data, selected }: NodeProps) {
     time_series: '\u{1F4C8}',
     '2d_field': '\u{1F5FA}\uFE0F',
     '3d_field': '\u{1F310}',
-    step: '\u{1F4D0}',
+    '2d_geometry': '\u{1F4D0}',
+    '3d_geometry': '\u{1F4D0}',
   };
 
   const fileName = d.fileName || '';
@@ -29,12 +30,24 @@ export default function InputNode({ id, data, selected }: NodeProps) {
       try {
         const result = await uploadFile(file);
         if (result.ok && result.fileId) {
+          const struct = result.structure;
+          let columns: string[] = result.columns ?? [];
+          if (struct?.format === 'h5' && struct.groups) {
+            columns = [];
+            for (const [grpPath, grpInfo] of Object.entries(struct.groups)) {
+              for (const dsName of Object.keys(grpInfo.datasets ?? {})) {
+                const full = grpPath === '/' ? `/${dsName}` : `${grpPath}/${dsName}`;
+                columns.push(full);
+              }
+            }
+          }
           updateNodeData(id, {
             source: result.fileId,
             fileName: result.originalName ?? file.name,
-            columns: result.columns ?? [],
+            columns,
             features: [],
             labels: [],
+            structure: struct,
           } as Partial<InputNodeData>);
         }
       } catch {

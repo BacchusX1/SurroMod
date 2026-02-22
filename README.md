@@ -8,12 +8,13 @@
 
 # Development 
 
-Visual workflow builder for surrogate models. Drag-and-drop ML pipelines on a canvas -- regressors, classifiers, feature engineering, validation, innovative agent based hp tuning -- then execute thepipeline from data loading (CAD geometries, scalar, matrices, tensors etc.) to model evaluation and production ready models.
+Visual workflow builder for surrogate models. Drag-and-drop ML pipelines on a canvas — regressors, classifiers, feature engineering, validation, innovative agent-based HP tuning — then execute the pipeline from data loading (CAD geometries, scalars, matrices, tensors, etc.) to model evaluation and production-ready models.
+
+I have read so many papers where I always learned the most by looking at the visual abstract. I want to create an environment in which one can draw such a visual abstract but also have an agent working on top, replacing costly HP tuning with an agent-based approach using just a few evaluations. Furthermore, I want to develop agent-based surrogate modeling using reliable building blocks.
+
+This is a demo version — want to know the current status? Just reach out to me on LinkedIn → Bernhard Einberger.
 
 Built with React / React Flow (frontend) and Python (backend).
-
-Current phase of the project focuses on the use-ability of the frontend - backend is started for MLP pipeline.
-Target is to work on frontend until I am satisfied and then wire as lean and adaptiv as possible into the full integrated backend. Builds on top of pytorch and scikit learn.
 
 ## Screenshot
 
@@ -93,5 +94,7 @@ test/
 - **HP tuners: (not implemented in DEMO)** 
 - **Inference: (not implemented in DEMO)** 
 
-Note: files that are simple placeholders or contain only `pass` are listed above as "stubs / not implemented yet" — backend functionality is a work in progress.
+generate third party license: 
+  - pip-licenses --with-system --with-license-file --output-file THIRD-PARTY-BACKEND.txt
+  - npx license-checker --summary --production > ../../THIRD-PARTY-FRONEND.txt
 

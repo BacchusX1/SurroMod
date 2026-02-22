@@ -4,13 +4,14 @@ import { type Node, type Edge } from '@xyflow/react';
 
 /**
  * Each InputKind maps 1-to-1 to a backend data digester:
- *   scalar      → ScalarDataDigester   (flat CSV, every cell is a number)
- *   time_series → TimeSeriesDigester   (sequential / temporal data)
- *   2d_field    → TwoDDataDigester     (images, 2-D spatial fields)
- *   3d_field    → ThreeDDataDigester   (volumetric / 3-D fields)
- *   step        → StepDataDigester     (CAD geometry – STEP / STL)
+ *   scalar       → ScalarDataDigester   (flat CSV or HDF5 scalar datasets)
+ *   time_series  → TimeSeriesDigester   (sequential / temporal data)
+ *   2d_field     → TwoDFieldDigester    (images, 2-D spatial fields)
+ *   3d_field     → ThreeDFieldDigester  (volumetric / 3-D fields)
+ *   2d_geometry  → Geometry2DDigester   (2-D shape representations)
+ *   3d_geometry  → Geometry3DDigester   (3-D shape representations)
  */
-export type InputKind = 'scalar' | 'time_series' | '2d_field' | '3d_field' | 'step';
+export type InputKind = 'scalar' | 'time_series' | '2d_field' | '3d_field' | '2d_geometry' | '3d_geometry';
 
 export type NodeCategory =
   | 'input'
@@ -74,6 +75,12 @@ export interface InputNodeData extends Record<string, unknown> {
   features: string[];
   /** Column names selected as labels (y) */
   labels: string[];
+  /**
+   * Full file structure returned by /api/data/structure.
+   * For CSV: { format: 'csv', columns: [...] }
+   * For H5:  { format: 'h5', groups: { ... } }
+   */
+  structure?: import('../api').DataStructure;
 }
 
 export interface RegressorNodeData extends Record<string, unknown> {

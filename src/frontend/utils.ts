@@ -122,7 +122,7 @@ export const featureEngineeringDefaults: Record<FeatureEngineeringMethod, HyperP
     whiten: false,
   },
   GeometrySampler: {
-    n_points: 1000,
+    n_points: 100,
     sampling_method: 'uniform',
   },
   Scaler: {
@@ -192,7 +192,8 @@ const inputKinds: { kind: import('./types').InputKind; label: string }[] = [
   { kind: 'time_series', label: 'Time Series' },
   { kind: '2d_field', label: '2D Field' },
   { kind: '3d_field', label: '3D Field' },
-  { kind: 'step', label: 'Geometry (STEP)' },
+  { kind: '2d_geometry', label: '2D Geometry' },
+  { kind: '3d_geometry', label: '3D Geometry' },
 ];
 
 const inputItems: PaletteItem[] = inputKinds.map(({ kind, label }) => ({

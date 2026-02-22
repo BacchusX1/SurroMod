@@ -30,7 +30,45 @@ export interface UploadResult {
   fileId?: string;
   originalName?: string;
   columns?: string[];
+  structure?: DataStructure;
   error?: string;
+}
+
+/** Structure returned by the /api/data/structure endpoint */
+export interface DatasetInfo {
+  shape: number[];
+  dtype: string;
+}
+
+export interface GroupInfo {
+  datasets: Record<string, DatasetInfo>;
+}
+
+export interface DataStructure {
+  format: 'csv' | 'h5';
+  /** CSV-only: column names */
+  columns?: string[];
+  /** H5-only: group → datasets map */
+  groups?: Record<string, GroupInfo>;
+}
+
+export interface StructureResult {
+  ok: boolean;
+  structure?: DataStructure;
+  error?: string;
+}
+
+/**
+ * Fetch the structure (columns / datasets) of an uploaded data file.
+ * Works for both CSV and HDF5 files.
+ */
+export async function fetchStructure(source: string): Promise<StructureResult> {
+  const res = await fetch('/api/data/structure', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: source }),
+  });
+  return res.json();
 }
 
 /**

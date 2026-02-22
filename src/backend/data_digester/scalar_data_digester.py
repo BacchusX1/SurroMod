@@ -1,8 +1,13 @@
 """
 Scalar Data Digester
 ====================
-Handles flat tabular CSV data where every feature and label cell is a
+Handles flat tabular data where every feature and label cell is a
 single scalar value (e.g. the concrete-strength dataset).
+
+Supports two file formats:
+    * **CSV**  – classic tabular data read via pandas.
+    * **HDF5** – scalar datasets (1-D arrays sharing the same first
+      dimension) read via :class:`H5Loader`.
 
 This is the most common data format for classical surrogate modelling.
 """
@@ -26,38 +31,62 @@ class ScalarDataDigester(DataDigester):
     Pipeline-executable digester for scalar tabular data.
 
     Expected ``node_data`` keys (from the frontend input node):
-        - source   : str        – path to a CSV file
-        - features : list[str]  – column names to use as X
-        - labels   : list[str]  – column names to use as y
+        - source   : str        – path to a CSV or HDF5 file
+        - features : list[str]  – column / dataset names to use as X
+        - labels   : list[str]  – column / dataset names to use as y
     """
 
     def __init__(self, node_data: dict[str, Any]) -> None:
         super().__init__(node_data)
         self._df: pd.DataFrame | None = None
 
-    # ── static helper ────────────────────────────────────────────────────
+    # ── format detection ─────────────────────────────────────────────────
+
+    def _is_h5(self) -> bool:
+        """``True`` when the source file is HDF5."""
+        return self.detect_format(self._source) == "h5"
+
+    # ── introspection (static) ───────────────────────────────────────────
 
     @staticmethod
-    def read_columns(path: str) -> list[str]:
-        """Return column names from a CSV file (header-only read)."""
+    def read_structure(path: str) -> dict[str, Any]:
+        """
+        Return the structure of a CSV or HDF5 scalar file.
+
+        * CSV  → ``{"format": "csv", "columns": [...]}``
+        * HDF5 → delegates to :meth:`H5Loader.read_structure`.
+        """
+        fmt = DataDigester.detect_format(path)
+        if fmt == "h5":
+            from src.backend.data_digester.utils.h5_loader import H5Loader
+            return H5Loader.read_structure(path)
+
+        # CSV
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(f"CSV file not found: {path}")
         df = pd.read_csv(p, nrows=0)
-        return list(df.columns)
+        return {"format": "csv", "columns": list(df.columns)}
 
     # ── pipeline interface ───────────────────────────────────────────────
 
     def execute(self, _inputs: dict[str, Any] | None = None) -> dict[str, Any]:
         """
-        Load the CSV and split into X (features) and y (labels).
+        Load CSV or HDF5 scalar data and split into X (features) and
+        optionally y (labels).
 
         Returns
         -------
         dict  with keys ``X``, ``feature_names``, ``columns``, and
-              optionally ``y`` and ``label_names`` (when label columns
-              are selected).
+              optionally ``y`` and ``label_names``.
         """
+        if self._is_h5():
+            return self._execute_h5()
+        return self._execute_csv()
+
+    # ── CSV path ─────────────────────────────────────────────────────────
+
+    def _execute_csv(self) -> dict[str, Any]:
         path = self._resolve_source()
         if not path.exists():
             raise FileNotFoundError(f"CSV not found: {self._source}")
@@ -65,23 +94,21 @@ class ScalarDataDigester(DataDigester):
         self._df = pd.read_csv(path)
         columns = list(self._df.columns)
 
-        if not self._features:
-            raise ValueError("No feature columns selected.")
+        if not self._features and not self._labels:
+            raise ValueError("No feature or label columns selected.")
 
-        missing_feat = [c for c in self._features if c not in columns]
-        if missing_feat:
-            raise ValueError(f"Feature column(s) not in CSV: {missing_feat}")
+        result: dict[str, Any] = {"columns": columns}
 
-        X = self._df[self._features].to_numpy(dtype=np.float32)
+        # ── Features (optional) ──────────────────────────────────────────
+        if self._features:
+            missing_feat = [c for c in self._features if c not in columns]
+            if missing_feat:
+                raise ValueError(f"Feature column(s) not in CSV: {missing_feat}")
+            X = self._df[self._features].to_numpy(dtype=np.float32)
+            result["X"] = X
+            result["feature_names"] = list(self._features)
 
-        result: dict[str, Any] = {
-            "X": X,
-            "feature_names": self._features,
-            "columns": columns,
-        }
-
-        # Labels are optional — a purely-features input node is valid when
-        # another upstream node provides the labels.
+        # ── Labels (optional) ────────────────────────────────────────────
         if self._labels:
             missing_lab = [c for c in self._labels if c not in columns]
             if missing_lab:
@@ -90,15 +117,61 @@ class ScalarDataDigester(DataDigester):
             if y.shape[1] == 1:
                 y = y.ravel()
             result["y"] = y
-            result["label_names"] = self._labels
-            logger.info(
-                "ScalarDataDigester: loaded %s  X=%s  y=%s",
-                path.name, X.shape, y.shape,
-            )
-        else:
-            logger.info(
-                "ScalarDataDigester: loaded %s  X=%s  (features only, no labels)",
-                path.name, X.shape,
-            )
+            result["label_names"] = list(self._labels)
 
+        x_shape = result.get("X", np.empty(0)).shape if "X" in result else None
+        y_shape = result.get("y", np.empty(0)).shape if "y" in result else None
+        logger.info(
+            "ScalarDataDigester(CSV): loaded %s  X=%s  y=%s",
+            path.name, x_shape, y_shape,
+        )
+        return result
+
+    # ── HDF5 path ────────────────────────────────────────────────────────
+
+    def _execute_h5(self) -> dict[str, Any]:
+        from src.backend.data_digester.utils.h5_loader import H5Loader
+
+        path = self._resolve_source()
+        if not path.exists():
+            raise FileNotFoundError(f"HDF5 not found: {self._source}")
+
+        if not self._features and not self._labels:
+            raise ValueError("No feature or label datasets selected.")
+
+        result: dict[str, Any] = {}
+
+        with H5Loader(path) as h5:
+            # ── Features ─────────────────────────────────────────────────
+            if self._features:
+                feat_arrays = []
+                for ds_path in self._features:
+                    arr = h5.read_dataset(ds_path).astype(np.float32)
+                    if arr.ndim == 1:
+                        arr = arr.reshape(-1, 1)
+                    feat_arrays.append(arr)
+                X = np.hstack(feat_arrays)
+                result["X"] = X
+                result["feature_names"] = list(self._features)
+
+            # ── Labels ───────────────────────────────────────────────────
+            if self._labels:
+                lab_arrays = []
+                for ds_path in self._labels:
+                    arr = h5.read_dataset(ds_path).astype(np.float32)
+                    if arr.ndim == 1:
+                        arr = arr.reshape(-1, 1)
+                    lab_arrays.append(arr)
+                y = np.hstack(lab_arrays)
+                if y.shape[1] == 1:
+                    y = y.ravel()
+                result["y"] = y
+                result["label_names"] = list(self._labels)
+
+        x_shape = result["X"].shape if "X" in result else None
+        y_shape = result["y"].shape if "y" in result else None
+        logger.info(
+            "ScalarDataDigester(H5): loaded %s  X=%s  y=%s",
+            path.name, x_shape, y_shape,
+        )
         return result

@@ -6,7 +6,8 @@ endpoints consumed by the Vite frontend.
 
 Endpoints:
     POST /api/pipeline/run      – execute a pipeline (nodes + edges)
-    POST /api/csv/columns       – read column names from a CSV file
+    POST /api/data/structure     – introspect a data file (CSV or HDF5)
+    POST /api/csv/columns       – (compat) column names from a CSV file
     GET  /api/logs/stream       – SSE stream of backend log messages
     GET  /api/health             – health check
 """
@@ -130,6 +131,10 @@ class CSVColumnsRequest(BaseModel):
     path: str
 
 
+class StructureRequest(BaseModel):
+    path: str
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 def resolve_upload_path(source: str) -> Path:
@@ -163,15 +168,43 @@ def pipeline_run(req: PipelineRequest) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+@app.post("/api/data/structure")
+def data_structure(req: StructureRequest) -> dict[str, Any]:
+    """
+    Return the structure of a data file (CSV or HDF5).
+
+    CSV  → ``{"format": "csv", "columns": [...]}``
+    HDF5 → ``{"format": "h5", "groups": {...}}``
+    """
+    try:
+        resolved = resolve_upload_path(req.path)
+        from src.backend.data_digester import DataDigester
+
+        fmt = DataDigester.detect_format(str(resolved))
+
+        if fmt == "h5":
+            from src.backend.data_digester.utils.h5_loader import H5Loader
+            struct = H5Loader.read_structure(str(resolved))
+        else:
+            from src.backend.data_digester.scalar_data_digester import ScalarDataDigester
+            struct = ScalarDataDigester.read_structure(str(resolved))
+
+        return {"ok": True, "structure": struct}
+    except Exception as exc:
+        logger.error("Data structure error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
 @app.post("/api/csv/columns")
 def csv_columns(req: CSVColumnsRequest) -> dict[str, Any]:
-    """Return the column names of a CSV file (supports upload IDs)."""
+    """Backward-compatible endpoint: return column names from a CSV file."""
     try:
         resolved = resolve_upload_path(req.path)
         from src.backend.data_digester.scalar_data_digester import ScalarDataDigester
 
-        cols = ScalarDataDigester.read_columns(str(resolved))
-        return {"ok": True, "columns": cols}
+        struct = ScalarDataDigester.read_structure(str(resolved))
+        columns = struct.get("columns", [])
+        return {"ok": True, "columns": columns}
     except Exception as exc:
         logger.error("CSV columns error: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -196,20 +229,29 @@ async def upload_file(file: UploadFile = File(...)) -> dict[str, Any]:
 
         logger.info("Uploaded file saved: %s → %s", original, dest)
 
-        # Try to read column names (best-effort)
+        # Introspect file structure (best-effort)
+        structure: dict[str, Any] = {}
         columns: list[str] = []
         try:
-            import pandas as pd
-            df = pd.read_csv(dest, nrows=0)
-            columns = list(df.columns)
+            from src.backend.data_digester import DataDigester
+            fmt = DataDigester.detect_format(str(dest))
+            if fmt == "h5":
+                from src.backend.data_digester.utils.h5_loader import H5Loader
+                structure = H5Loader.read_structure(str(dest))
+            else:
+                import pandas as pd
+                df = pd.read_csv(dest, nrows=0)
+                columns = list(df.columns)
+                structure = {"format": "csv", "columns": columns}
         except Exception:
-            logger.warning("Could not read columns from uploaded file %s", file_id)
+            logger.warning("Could not read structure from uploaded file %s", file_id)
 
         return {
             "ok": True,
             "fileId": file_id,
             "originalName": original,
             "columns": columns,
+            "structure": structure,
         }
     except Exception as exc:
         logger.error("Upload error: %s", exc)

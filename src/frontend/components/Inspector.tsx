@@ -15,7 +15,8 @@ import type {
   MultiModelEntry,
 } from '../types';
 import { categoryColor, advancedKeys } from '../utils';
-import { uploadFile } from '../api';
+import { uploadFile, fetchStructure } from '../api';
+import type { DataStructure } from '../api';
 
 // ─── Hyperparameter Editor ──────────────────────────────────────────────────
 
@@ -62,7 +63,7 @@ const selectOptions: Record<string, { label: string; value: string }[]> = {
   ],
   sampling_method: [
     { label: 'Uniform', value: 'uniform' },
-    { label: 'Random', value: 'random' },
+    { label: 'Cosine', value: 'cosine' },
     { label: 'Curvature Based', value: 'curvature_based' },
   ],
   method: [
@@ -429,12 +430,26 @@ export default function Inspector() {
     try {
       const result = await uploadFile(file);
       if (result.ok && result.fileId) {
+        // Derive a flat column list from the structure for the column picker
+        const struct: DataStructure | undefined = result.structure;
+        let columns: string[] = result.columns ?? [];
+        if (struct?.format === 'h5' && struct.groups) {
+          // Flatten HDF5 datasets into full paths
+          columns = [];
+          for (const [grpPath, grpInfo] of Object.entries(struct.groups)) {
+            for (const dsName of Object.keys(grpInfo.datasets ?? {})) {
+              const full = grpPath === '/' ? `/${dsName}` : `${grpPath}/${dsName}`;
+              columns.push(full);
+            }
+          }
+        }
         updateNodeData(selectedNodeId, {
           source: result.fileId,
           fileName: result.originalName ?? file.name,
-          columns: result.columns ?? [],
+          columns,
           features: [],
           labels: [],
+          structure: struct,
         } as Partial<SurroNodeData>);
       } else {
         alert(`Upload error: ${result.error}`);
@@ -446,7 +461,7 @@ export default function Inspector() {
     }
   }, [selectedNodeId, updateNodeData]);
 
-  // Load CSV columns from backend (re-fetch for already-uploaded files)
+  // Load file structure from backend (re-fetch for already-uploaded files)
   const loadColumns = useCallback(async () => {
     if (!selectedNodeId) return;
     const node = nodes.find((n) => n.id === selectedNodeId);
@@ -455,16 +470,23 @@ export default function Inspector() {
     if (!inp.source) return;
     setCsvLoading(true);
     try {
-      const res = await fetch('/api/csv/columns', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: inp.source }),
-      });
-      const json = await res.json();
-      if (json.ok) {
-        updateNodeData(selectedNodeId, { columns: json.columns } as Partial<SurroNodeData>);
+      const res = await fetchStructure(inp.source);
+      if (res.ok && res.structure) {
+        const struct = res.structure;
+        let columns: string[] = [];
+        if (struct.format === 'csv') {
+          columns = struct.columns ?? [];
+        } else if (struct.format === 'h5' && struct.groups) {
+          for (const [grpPath, grpInfo] of Object.entries(struct.groups)) {
+            for (const dsName of Object.keys(grpInfo.datasets ?? {})) {
+              const full = grpPath === '/' ? `/${dsName}` : `${grpPath}/${dsName}`;
+              columns.push(full);
+            }
+          }
+        }
+        updateNodeData(selectedNodeId, { columns, structure: struct } as Partial<SurroNodeData>);
       } else {
-        alert(`Error: ${json.error}`);
+        alert(`Error: ${res.error}`);
       }
     } catch {
       alert('Cannot reach backend. Is the server running?');
@@ -595,7 +617,7 @@ export default function Inspector() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".csv,.tsv,.txt"
+                accept=".csv,.tsv,.txt,.h5,.hdf5"
                 style={{ display: 'none' }}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
@@ -614,8 +636,8 @@ export default function Inspector() {
               ) : (
                 <>
                   <span className="inspector__drop-zone-icon">📁</span>
-                  <span className="inspector__drop-zone-text">Drop a CSV file here</span>
-                  <span className="inspector__drop-zone-hint">or click to browse</span>
+                  <span className="inspector__drop-zone-text">Drop a data file here</span>
+                  <span className="inspector__drop-zone-hint">CSV or HDF5 — click to browse</span>
                 </>
               )}
             </div>
@@ -626,13 +648,15 @@ export default function Inspector() {
                 onClick={loadColumns}
                 disabled={csvLoading}
               >
-                {csvLoading ? 'Loading…' : '📋 Reload Columns'}
+                {csvLoading ? 'Loading…' : '📋 Reload Structure'}
               </button>
             )}
 
             {(data as InputNodeData).columns?.length > 0 && (
               <>
-                <div className="inspector__section-title">Column Roles</div>
+                <div className="inspector__section-title">
+                  {(data as InputNodeData).structure?.format === 'h5' ? 'Dataset Roles' : 'Column Roles'}
+                </div>
                 <ColumnPicker
                   columns={(data as InputNodeData).columns}
                   features={(data as InputNodeData).features || []}

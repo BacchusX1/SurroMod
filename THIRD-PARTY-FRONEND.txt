@@ -1,0 +1,5 @@
+├─ MIT: 20
+├─ ISC: 8
+├─ BSD-3-Clause: 1
+└─ UNLICENSED: 1
+

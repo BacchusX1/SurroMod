@@ -237,19 +237,22 @@ def _build_executor(node_data: dict[str, Any], seed: int | None = None) -> Any:
         if input_kind == "scalar":
             from src.backend.data_digester.scalar_data_digester import ScalarDataDigester
             return ScalarDataDigester(node_data)
+        if input_kind == "2d_field":
+            from src.backend.data_digester.two_d_data_digester import TwoDFieldDigester
+            return TwoDFieldDigester(node_data)
+        if input_kind == "2d_geometry":
+            from src.backend.data_digester.geometry_2d_digester import Geometry2DDigester
+            return Geometry2DDigester(node_data)
         # Future digesters:
         # if input_kind == "time_series":
         #     from src.backend.data_digester.time_series_digester import TimeSeriesDigester
         #     return TimeSeriesDigester(node_data)
-        # if input_kind == "2d_field":
-        #     from src.backend.data_digester.2d_data_digester import TwoDDataDigester
-        #     return TwoDDataDigester(node_data)
         # if input_kind == "3d_field":
-        #     from src.backend.data_digester.3d_data_digester import ThreeDDataDigester
-        #     return ThreeDDataDigester(node_data)
-        # if input_kind == "step":
-        #     from src.backend.data_digester.step_data_digester import StepDataDigester
-        #     return StepDataDigester(node_data)
+        #     from src.backend.data_digester.three_d_data_digester import ThreeDFieldDigester
+        #     return ThreeDFieldDigester(node_data)
+        # if input_kind == "3d_geometry":
+        #     from src.backend.data_digester.geometry_3d_digester import Geometry3DDigester
+        #     return Geometry3DDigester(node_data)
         raise ValueError(f"Unsupported input kind: {input_kind}")
 
     if category == "feature_engineering":
@@ -267,6 +270,10 @@ def _build_executor(node_data: dict[str, Any], seed: int | None = None) -> Any:
         if method == "Autoencoder":
             from src.backend.feature_engineering.autoencoder import Autoencoder
             return Autoencoder(hp, seed=seed)
+
+        if method == "GeometrySampler":
+            from src.backend.feature_engineering.geometry_sampler import GeometrySampler
+            return GeometrySampler(hp, seed=seed)
 
         # Other FE methods can be added here
         raise ValueError(f"Unsupported FE method: {method}")
