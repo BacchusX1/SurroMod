@@ -288,6 +288,11 @@ class Autoencoder:
             "latent_dim": self._latent_dim,
         }
 
+        # Encode holdout with the same fitted autoencoder (no re-fitting)
+        if "X_holdout" in inputs:
+            X_ho = np.asarray(inputs["X_holdout"], dtype=np.float32)
+            outputs["X_holdout"] = self.transform(X_ho)
+
         # Generate latent feature names
         outputs["feature_names"] = [
             f"z{i + 1}" for i in range(X_latent.shape[1])

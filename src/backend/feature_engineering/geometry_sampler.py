@@ -97,6 +97,15 @@ class GeometrySampler:
             )
 
         outputs: dict[str, Any] = {**inputs, "X": X_sampled, "feature_names": feature_names}
+
+        # Resample holdout geometry with the same sampling parameters
+        if "X_holdout" in inputs:
+            X_ho = np.asarray(inputs["X_holdout"], dtype=np.float32)
+            if X_ho.ndim == 3 and X_ho.shape[2] == 2:
+                outputs["X_holdout"] = self._sample_landmarks(X_ho)
+            elif X_ho.ndim == 2:
+                outputs["X_holdout"] = X_ho
+
         return outputs
 
     # ── sampling logic ───────────────────────────────────────────────────

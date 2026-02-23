@@ -408,7 +408,7 @@ const useStore = create<StoreState>((set, get) => ({
     const state = get();
     const payload = {
       nodes: state.nodes.map((n) => ({ id: n.id, type: n.type, position: n.position, data: n.data })),
-      edges: state.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+      edges: state.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
     };
     try {
       const result = await saveWorkflow(name, payload.nodes as any, payload.edges);
@@ -445,6 +445,8 @@ const useStore = create<StoreState>((set, get) => ({
           id: e.id ?? `edge_restored_${i}`,
           source: e.source,
           target: e.target,
+          sourceHandle: e.sourceHandle,
+          targetHandle: e.targetHandle,
           animated: true,
         }));
 
@@ -508,7 +510,7 @@ const useStore = create<StoreState>((set, get) => ({
     try {
       const payload = {
         nodes: state.nodes.map((n) => ({ id: n.id, type: n.type, data: n.data })),
-        edges: state.edges.map((e) => ({ source: e.source, target: e.target })),
+        edges: state.edges.map((e) => ({ source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
         seed: state.globalSeed,
       };
 

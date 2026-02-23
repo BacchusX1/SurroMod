@@ -9,6 +9,8 @@ import type {
   FeatureEngineeringNodeData,
   InferenceNodeData,
   HPTunerNodeData,
+  RBLNodeData,
+  RBLAggregatorNodeData,
   HyperParams,
   ValidatorResult,
   MultiModelValidatorResult,
@@ -247,11 +249,32 @@ function ColumnPicker({
 
 /** Single-model results (backward compat) */
 function ValidatorResultsView({ result }: { result: ValidatorResult }) {
+  const hasHoldout = !!result.holdout;
+  const [view, setView] = useState<'train' | 'holdout'>('train');
+  const active = view === 'holdout' && hasHoldout ? result.holdout! : result;
+
   return (
     <div className="validator-results">
+      {hasHoldout && (
+        <div className="inspector__tabs" style={{ marginBottom: 8 }}>
+          <button
+            className={`inspector__tab ${view === 'train' ? 'inspector__tab--active' : ''}`}
+            onClick={() => setView('train')}
+          >
+            Train
+          </button>
+          <button
+            className={`inspector__tab ${view === 'holdout' ? 'inspector__tab--active' : ''}`}
+            onClick={() => setView('holdout')}
+          >
+            Holdout
+          </button>
+        </div>
+      )}
+
       <div className="inspector__section-title">Overall Metrics</div>
       <div className="validator-results__metrics">
-        {Object.entries(result.metrics).map(([key, val]) => (
+        {Object.entries(active.metrics).map(([key, val]) => (
           <div key={key} className="validator-results__metric">
             <span className="validator-results__metric-key">{key.toUpperCase()}</span>
             <span className="validator-results__metric-val">{(val as number).toFixed(4)}</span>
@@ -259,7 +282,7 @@ function ValidatorResultsView({ result }: { result: ValidatorResult }) {
         ))}
       </div>
 
-      {result.per_label.map((pl) => (
+      {active.per_label.map((pl) => (
         <div key={pl.label} className="validator-results__label-block">
           <div className="inspector__section-title">{pl.label}</div>
           <div className="validator-results__metrics">
@@ -291,19 +314,46 @@ function MultiModelResultsView({
   result: MultiModelValidatorResult;
   plotsPerRow: number;
 }) {
+  const hasHoldout = !!result.holdout;
+  const [view, setView] = useState<'train' | 'holdout'>('train');
+
+  const activeResults = view === 'holdout' && hasHoldout
+    ? result.holdout!.model_results
+    : result.model_results;
+  const activeBarPlot = view === 'holdout' && hasHoldout
+    ? result.holdout!.comparison_bar_plot
+    : result.comparison_bar_plot;
+
   // Collect all unique label names across models
-  const labelNames = result.model_results.length > 0
-    ? result.model_results[0].per_label.map((pl) => pl.label)
+  const labelNames = activeResults.length > 0
+    ? activeResults[0].per_label.map((pl) => pl.label)
     : [];
 
   return (
     <div className="validator-results">
+      {hasHoldout && (
+        <div className="inspector__tabs" style={{ marginBottom: 8 }}>
+          <button
+            className={`inspector__tab ${view === 'train' ? 'inspector__tab--active' : ''}`}
+            onClick={() => setView('train')}
+          >
+            Train
+          </button>
+          <button
+            className={`inspector__tab ${view === 'holdout' ? 'inspector__tab--active' : ''}`}
+            onClick={() => setView('holdout')}
+          >
+            Holdout
+          </button>
+        </div>
+      )}
+
       {/* ── Comparison bar chart ─────────────────────────────────────── */}
       <div className="inspector__section-title">Metrics Comparison</div>
-      {result.comparison_bar_plot && (
+      {activeBarPlot && (
         <img
           className="validator-results__plot"
-          src={`data:image/png;base64,${result.comparison_bar_plot}`}
+          src={`data:image/png;base64,${activeBarPlot}`}
           alt="Metrics Comparison"
         />
       )}
@@ -315,13 +365,13 @@ function MultiModelResultsView({
           <thead>
             <tr>
               <th>Model</th>
-              {Object.keys(result.model_results[0]?.metrics ?? {}).map((k) => (
+              {Object.keys(activeResults[0]?.metrics ?? {}).map((k) => (
                 <th key={k}>{k.toUpperCase()}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {result.model_results.map((mr: MultiModelEntry) => (
+            {activeResults.map((mr: MultiModelEntry) => (
               <tr key={mr.model_name}>
                 <td className="validator-results__model-name">{mr.model_name}</td>
                 {Object.values(mr.metrics).map((v, i) => (
@@ -343,12 +393,12 @@ function MultiModelResultsView({
             className="validator-results__scatter-grid"
             style={{
               gridTemplateColumns: `repeat(${Math.min(
-                result.model_results.length,
+                activeResults.length,
                 plotsPerRow,
               )}, 1fr)`,
             }}
           >
-            {result.model_results.map((mr: MultiModelEntry) => {
+            {activeResults.map((mr: MultiModelEntry) => {
               const labelResult = mr.per_label.find((pl) => pl.label === labelName);
               if (!labelResult?.plot) return null;
               return (
@@ -675,6 +725,20 @@ export default function Inspector() {
               <span>Model</span>
               <input type="text" value={(data as RegressorNodeData).model} disabled />
             </label>
+            <label className="inspector__field">
+              <span>Role</span>
+              <select
+                value={(data as RegressorNodeData).role ?? 'final'}
+                onChange={(e) =>
+                  updateNodeData(selectedNodeId, {
+                    role: e.target.value as 'transform' | 'final',
+                  } as Partial<SurroNodeData>)
+                }
+              >
+                <option value="final">Final (predict labels)</option>
+                <option value="transform">Transform (pass-through)</option>
+              </select>
+            </label>
             <div className="inspector__section-title">Hyperparameters</div>
             <TabbedHyperParams
               hyperparams={(data as RegressorNodeData).hyperparams}
@@ -805,6 +869,51 @@ export default function Inspector() {
               onChange={handleHyperparamChange}
             />
           </>
+        )}
+
+        {/* ── RBL ──────────────────────────────────────────────────────── */}
+        {data.category === 'rbl' && (
+          <>
+            <div className="inspector__section-title">Loss Weights</div>
+            <label className="inspector__field">
+              <span>λ kernel (MSE(z, y))</span>
+              <input
+                type="number"
+                step="0.01"
+                min={0}
+                value={(data as RBLNodeData).lambda_kernel ?? 1.0}
+                onChange={(e) =>
+                  updateNodeData(selectedNodeId, {
+                    lambda_kernel: parseFloat(e.target.value) || 0,
+                  } as Partial<SurroNodeData>)
+                }
+              />
+            </label>
+            <label className="inspector__field">
+              <span>λ residual (mean(r²))</span>
+              <input
+                type="number"
+                step="0.001"
+                min={0}
+                value={(data as RBLNodeData).lambda_residual ?? 0.01}
+                onChange={(e) =>
+                  updateNodeData(selectedNodeId, {
+                    lambda_residual: parseFloat(e.target.value) || 0,
+                  } as Partial<SurroNodeData>)
+                }
+              />
+            </label>
+            <p className="inspector__hint" style={{ fontSize: '0.75rem', opacity: 0.7, margin: '0.5rem 0' }}>
+              loss = MSE(ŷ, y) + λ_kernel · MSE(z, y) + λ_residual · mean(r²)
+            </p>
+          </>
+        )}
+
+        {/* ── RBL Aggregator ───────────────────────────────────────────── */}
+        {data.category === 'rbl_aggregator' && (
+          <p className="inspector__hint" style={{ fontSize: '0.8rem', opacity: 0.7, margin: '0.5rem 0' }}>
+            Computes ŷ = z + r (primary prediction + residual correction).
+          </p>
         )}
       </div>
 

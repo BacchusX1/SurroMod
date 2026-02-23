@@ -1,10 +1,10 @@
 """
-Batch Inference
-===============
-Stub for running batch inference with a trained surrogate model.
+Batch Inference (backward compatibility)
+=========================================
+Re-exports the unified Inference class.
 """
 
+from src.backend.inference.model_inference import Inference
 
-class BatchInference:
-    """Run batch predictions using a trained surrogate model."""
-    pass
+# Alias for backward compatibility
+BatchInference = Inference

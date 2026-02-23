@@ -119,6 +119,11 @@ class Scaler:
 
         outputs: dict[str, Any] = {**inputs, "X": X_scaled, "scaler": self}
 
+        # Scale holdout features with the same fitted transform (no re-fitting)
+        if "X_holdout" in inputs:
+            X_ho = np.asarray(inputs["X_holdout"], dtype=np.float32)
+            outputs["X_holdout"] = self.transform(X_ho)
+
         # Scale labels too (needed for inverse_transform in validator)
         if y is not None:
             y_arr = np.asarray(y, dtype=np.float32)
@@ -130,6 +135,16 @@ class Scaler:
                 y_scaled = y_scaled.ravel()
             outputs["y"] = y_scaled
             outputs["y_scaler"] = y_scaler
+
+            # Scale holdout labels with the same y_scaler
+            if "y_holdout" in inputs:
+                y_ho = np.asarray(inputs["y_holdout"], dtype=np.float32)
+                if y_ho.ndim == 1:
+                    y_ho = y_ho.reshape(-1, 1)
+                y_ho_scaled = y_scaler.transform(y_ho)
+                if y_ho_scaled.shape[1] == 1:
+                    y_ho_scaled = y_ho_scaled.ravel()
+                outputs["y_holdout"] = y_ho_scaled
 
         logger.info("Scaler: transformed X=%s method=%s", X_scaled.shape, self._method)
         return outputs

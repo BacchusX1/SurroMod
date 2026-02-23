@@ -59,6 +59,9 @@ def _workflow_ids() -> list[str]:
 def _load_workflow(filename: str) -> dict[str, Any]:
     """Unpickle a workflow and restore its embedded data files."""
     path = WORKFLOWS_DIR / filename
+    # Try appending .pkl if the file is not found
+    if not path.exists() and not filename.endswith(".pkl"):
+        path = WORKFLOWS_DIR / f"{filename}.pkl"
     if not path.exists():
         pytest.fail(f"Workflow file not found: {path}")
 

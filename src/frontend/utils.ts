@@ -5,6 +5,8 @@ import type {
   FeatureEngineeringMethod,
   HPTunerMethod,
   HyperParams,
+  RegressorRole,
+  SurroNodeData,
 } from './types';
 
 // ─── Default hyperparameters per regressor model ────────────────────────────
@@ -17,6 +19,7 @@ export const regressorDefaults: Record<RegressorModel, HyperParams> = {
     learning_rate: 0.001,
     epochs: 100,
     batch_size: 32,
+    output_dim: 0,
     optimizer: 'Adam',
     loss_function: 'MSE',
     weight_init: 'default',
@@ -53,6 +56,7 @@ export const regressorDefaults: Record<RegressorModel, HyperParams> = {
     alpha: 1.0,
     gamma: 0.1,
     degree: 3,
+    output_dim: 0,
   },
   Polynomial: {
     degree: 3,
@@ -141,6 +145,10 @@ export const featureEngineeringDefaults: Record<FeatureEngineeringMethod, HyperP
     epochs: 100,
     batch_size: 32,
   },
+  TrainTestSplit: {
+    holdout_ratio: 0.2,
+    shuffle: true,
+  },
 };
 
 // ─── Default hyperparameters per HP tuner method ────────────────────────────
@@ -183,6 +191,7 @@ export const advancedKeys: Set<string> = new Set([
   'weight_decay',
   'layer_sizes',
   'coef0',
+  'output_dim',
 ]);
 
 // ─── Palette items ──────────────────────────────────────────────────────────
@@ -229,6 +238,7 @@ const regressorItems: PaletteItem[] = regressorModels.map((model) => ({
     category: 'regressor' as const,
     model,
     hyperparams: { ...regressorDefaults[model] },
+    role: 'final' as RegressorRole,
   },
 }));
 
@@ -268,6 +278,7 @@ const featureEngineeringMethods: FeatureEngineeringMethod[] = [
   'Scaler',
   'DataSplitter',
   'Autoencoder',
+  'TrainTestSplit',
 ];
 
 const featureEngineeringItems: PaletteItem[] = featureEngineeringMethods.map((method) => {
@@ -277,6 +288,7 @@ const featureEngineeringItems: PaletteItem[] = featureEngineeringMethods.map((me
     Scaler: 'Scaler',
     DataSplitter: 'Data Splitter',
     Autoencoder: 'Autoencoder',
+    TrainTestSplit: 'Train-Test Split',
   };
   return {
     category: 'feature_engineering' as const,
@@ -326,22 +338,12 @@ const validatorItems: PaletteItem[] = [
 const inferenceItems: PaletteItem[] = [
   {
     category: 'inference',
-    label: 'Model Inference',
+    label: 'Inference',
     defaultData: {
-      label: 'Model Inference',
+      label: 'Inference',
       category: 'inference',
       modelSource: '',
       batchSize: 1,
-    },
-  },
-  {
-    category: 'inference',
-    label: 'Batch Inference',
-    defaultData: {
-      label: 'Batch Inference',
-      category: 'inference',
-      modelSource: '',
-      batchSize: 32,
     },
   },
 ];
@@ -370,11 +372,33 @@ const hpTunerItems: PaletteItem[] = hpTunerMethods.map((method) => {
   };
 });
 
+const rblItems: PaletteItem[] = [
+  {
+    category: 'feature_engineering' as const,
+    label: 'RBL',
+    defaultData: {
+      label: 'RBL',
+      category: 'rbl' as const,
+      lambda_kernel: 1.0,
+      lambda_residual: 0.01,
+    } as unknown as SurroNodeData,
+  },
+  {
+    category: 'feature_engineering' as const,
+    label: 'RBL Aggregator',
+    defaultData: {
+      label: 'RBL Aggregator',
+      category: 'rbl_aggregator' as const,
+    } as unknown as SurroNodeData,
+  },
+];
+
 export const paletteItems: PaletteItem[] = [
   ...inputItems,
   ...featureEngineeringItems,
   ...regressorItems,
   ...classifierItems,
+  ...rblItems,
   ...hpTunerItems,
   ...validatorItems,
   ...inferenceItems,
@@ -402,4 +426,6 @@ export const categoryColor: Record<string, string> = {
   feature_engineering: '#c084fc',
   inference: '#fb923c',
   hp_tuner: '#2dd4bf',
+  rbl: '#f97316',
+  rbl_aggregator: '#ef4444',
 };

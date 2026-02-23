@@ -147,6 +147,7 @@ class MLPRegressor(ModelBase):
     model_name = "MLP"
     model_category = "regressor"
     model_type = "MLP"
+    is_differentiable = True
 
     # ── Hyperparameter schema ────────────────────────────────────────────────
 
@@ -184,8 +185,6 @@ class MLPRegressor(ModelBase):
         self._optimizer: Any = None
         self._scheduler: Any = None
         self._loss_fn: Any = None
-        self._input_dim: int = 0
-        self._output_dim: int = 0
 
     # ── Lifecycle: build ─────────────────────────────────────────────────────
 
@@ -195,6 +194,9 @@ class MLPRegressor(ModelBase):
 
         If ``layer_sizes`` is non-empty (comma-separated ints), it overrides
         ``hidden_layers`` / ``neurons_per_layer``.
+
+        If ``output_dim`` hyperparam is set to a positive value, it overrides
+        the automatically detected output dimension (used for transform mode).
         """
         if torch is None:
             raise RuntimeError(
@@ -208,6 +210,11 @@ class MLPRegressor(ModelBase):
             n_layers = int(self.get_hyperparam("hidden_layers", 3))
             width = int(self.get_hyperparam("neurons_per_layer", 64))
             layer_sizes = [width] * n_layers
+
+        # Allow explicit output_dim override (for transform role)
+        hp_output_dim = int(self.get_hyperparam("output_dim", 0))
+        if hp_output_dim > 0:
+            self._output_dim = hp_output_dim
 
         self._model = _MLPNetwork(
             input_dim=self._input_dim,
@@ -228,6 +235,17 @@ class MLPRegressor(ModelBase):
             layer_sizes,
             sum(p.numel() for p in self._model.parameters()),
         )
+
+    # ── Differentiable interface ───────────────────────────────────────────────
+
+    def get_torch_module(self) -> "nn.Module":
+        """
+        Return the underlying ``_MLPNetwork`` nn.Module for use in
+        composed differentiable training pipelines.
+        """
+        if self._model is None:
+            raise RuntimeError("Call build() before get_torch_module().")
+        return self._model
 
     # ── Lifecycle: compile ───────────────────────────────────────────────────
 

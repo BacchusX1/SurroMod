@@ -21,6 +21,8 @@ import ValidatorNode from './nodes/ValidatorNode';
 import FeatureEngineeringNode from './nodes/FeatureEngineeringNode';
 import InferenceNode from './nodes/InferenceNode';
 import HPTunerNode from './nodes/HPTunerNode';
+import RBLNode from './nodes/RBLNode';
+import RBLAggregatorNode from './nodes/RBLAggregatorNode';
 
 // Register custom node types (keys must match node.type stored in the store)
 const nodeTypes = {
@@ -31,6 +33,8 @@ const nodeTypes = {
   feature_engineering: FeatureEngineeringNode,
   inference: InferenceNode,
   hp_tuner: HPTunerNode,
+  rbl: RBLNode,
+  rbl_aggregator: RBLAggregatorNode,
 };
 
 // ─── Sidebar ────────────────────────────────────────────────────────────────

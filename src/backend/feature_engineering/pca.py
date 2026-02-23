@@ -118,6 +118,11 @@ class PCATransformer:
             "pca_n_components": int(self._pca.n_components_),
         }
 
+        # Transform holdout with the same fitted PCA (no re-fitting)
+        if "X_holdout" in inputs:
+            X_ho = np.asarray(inputs["X_holdout"], dtype=np.float32)
+            outputs["X_holdout"] = self.transform(X_ho)
+
         # Generate PCA feature names for downstream
         outputs["feature_names"] = [
             f"PC{i + 1}" for i in range(X_pca.shape[1])

@@ -48,6 +48,10 @@ class ModelBase(abc.ABC):
     #: Override in every concrete subclass.
     model_type: str = "undefined"
 
+    #: Whether the model supports PyTorch autograd (end-to-end backprop).
+    #: Override to ``True`` in differentiable subclasses (MLP, CNN, LSTM, …).
+    is_differentiable: bool = False
+
     # ── Subclass registry ─────────────────────────────────────────────────────
     #: Maps ``model_type`` strings to concrete subclasses so the pipeline
     #: executor can instantiate models from frontend node data.
@@ -112,6 +116,9 @@ class ModelBase(abc.ABC):
         self._is_trained: bool = False
         self._metadata: dict[str, Any] = {}
         self._seed: int | None = None    # global reproducibility seed
+        self._role: str = "final"        # 'transform' or 'final'
+        self._input_dim: int = 0
+        self._output_dim: int = 0
 
     # ─────────────────────────────────────────────────────────────────────────
     # Hyperparameter interface
@@ -341,6 +348,22 @@ class ModelBase(abc.ABC):
         Returns ``None`` for models that do not expose feature importances.
         """
         return None
+
+    def get_torch_module(self) -> Any:
+        """
+        Return the underlying ``torch.nn.Module`` for differentiable models.
+
+        Only meaningful when :attr:`is_differentiable` is ``True``.
+        Override in differentiable subclasses.
+
+        Raises
+        ------
+        NotImplementedError
+            If the model is not differentiable.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} is not differentiable and has no torch module."
+        )
 
     # ─────────────────────────────────────────────────────────────────────────
     # Serialisation  (save / load)
@@ -609,7 +632,9 @@ class ModelBase(abc.ABC):
         """
         model_type = node_data["model"]
         hyperparams = node_data.get("hyperparams")
-        return cls.create(model_type, hyperparams=hyperparams)
+        instance = cls.create(model_type, hyperparams=hyperparams)
+        instance._role = node_data.get("role", "final")
+        return instance
 
     # ─────────────────────────────────────────────────────────────────────────
     # Pipeline node interface  (called by the node graph executor)

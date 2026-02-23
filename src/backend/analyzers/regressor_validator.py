@@ -97,6 +97,7 @@ class RegressorValidator:
         label_name: str = "y",
         model_name: str | None = None,
         colour: str = "#6366f1",
+        plot_subtitle: str | None = None,
     ) -> str:
         """Return a base64-encoded PNG of a true-vs-predicted scatter plot."""
         import matplotlib
@@ -119,6 +120,8 @@ class RegressorValidator:
         title = f"True vs Predicted – {label_name}"
         if model_name:
             title = f"{model_name} – {label_name}"
+        if plot_subtitle:
+            title = f"{title} [{plot_subtitle}]"
         ax.set_title(title)
         ax.set_xlim(lo - margin, hi + margin)
         ax.set_ylim(lo - margin, hi + margin)
@@ -197,9 +200,19 @@ class RegressorValidator:
         y_scaler: Any | None,
         model_name: str | None = None,
         colour: str = "#6366f1",
+        y_pred_precomputed: np.ndarray | None = None,
+        plot_subtitle: str | None = None,
     ) -> dict[str, Any]:
-        """Run prediction + compute metrics + generate per-label plots for one model."""
-        y_pred = np.asarray(model.predict(X), dtype=np.float32)
+        """Run prediction + compute metrics + generate per-label plots for one model.
+
+        If *y_pred_precomputed* is provided (e.g. from an RBL-Aggregator)
+        the validator skips ``model.predict()`` and uses those values
+        directly.
+        """
+        if y_pred_precomputed is not None:
+            y_pred = np.asarray(y_pred_precomputed, dtype=np.float32)
+        else:
+            y_pred = np.asarray(model.predict(X), dtype=np.float32)
 
         # Inverse-transform if scaler was applied
         yt = y_true.copy()
@@ -230,6 +243,7 @@ class RegressorValidator:
                 label_name=name,
                 model_name=model_name,
                 colour=colour,
+                plot_subtitle=plot_subtitle,
             )
             per_label.append({"label": name, "metrics": m, "plot": plot_b64})
 
@@ -282,17 +296,46 @@ class RegressorValidator:
             y_true = np.asarray(inputs["y"], dtype=np.float32)
             label_names: list[str] = inputs.get("label_names") or ["y"]
             y_scaler = inputs.get("y_scaler")
+            y_pred_pre = inputs.get("y_pred")  # from RBL-Aggregator
 
-            result = self._evaluate_single_model(
+            train_result = self._evaluate_single_model(
                 model=inputs["model"],
                 X=X, y_true=y_true,
                 label_names=label_names,
                 y_scaler=y_scaler,
+                y_pred_precomputed=y_pred_pre,
+                plot_subtitle="Train",
             )
-            self._results = result
+
+            # ── Holdout evaluation ───────────────────────────────────────
+            holdout_result: dict[str, Any] | None = None
+            if "X_holdout" in inputs and "y_holdout" in inputs:
+                X_ho = np.asarray(inputs["X_holdout"], dtype=np.float32)
+                y_ho = np.asarray(inputs["y_holdout"], dtype=np.float32)
+                y_pred_ho = inputs.get("y_pred_holdout")  # from RBL-Aggregator
+                holdout_result = self._evaluate_single_model(
+                    model=inputs["model"],
+                    X=X_ho, y_true=y_ho,
+                    label_names=label_names,
+                    y_scaler=y_scaler,
+                    y_pred_precomputed=y_pred_ho,
+                    plot_subtitle="Holdout",
+                    colour="#ef4444",
+                )
+                logger.info(
+                    "RegressorValidator (holdout): overall=%s",
+                    holdout_result["metrics"],
+                )
+
+            self._results = {
+                **train_result,
+            }
+            if holdout_result is not None:
+                self._results["holdout"] = holdout_result
+
             logger.info(
-                "RegressorValidator (single): %s  overall=%s",
-                ", ".join(label_names), result["metrics"],
+                "RegressorValidator (single): %s  train=%s",
+                ", ".join(label_names), train_result["metrics"],
             )
             return self._results
 
@@ -303,6 +346,11 @@ class RegressorValidator:
         model_results: list[dict[str, Any]] = []
         all_overall_metrics: list[dict[str, float]] = []
         model_names: list[str] = []
+
+        # Also track holdout results per model
+        holdout_model_results: list[dict[str, Any]] = []
+        all_holdout_metrics: list[dict[str, float]] = []
+        has_holdout = False
 
         for idx, entry in enumerate(models_list):
             name = entry["name"]
@@ -315,16 +363,21 @@ class RegressorValidator:
             y_scaler = entry.get("y_scaler")
             label_names_for_model: list[str] = entry.get("label_names") or ["y"]
 
+            y_pred_pre = entry.get("y_pred")  # from RBL-Aggregator
+
             logger.info(
-                "RegressorValidator: evaluating '%s' with y_scaler=%s",
+                "RegressorValidator: evaluating '%s' with y_scaler=%s, precomputed=%s",
                 name,
                 type(y_scaler).__name__ if y_scaler is not None else "None",
+                y_pred_pre is not None,
             )
 
             res = self._evaluate_single_model(
                 model=model, X=X, y_true=y_true,
                 label_names=label_names_for_model, y_scaler=y_scaler,
                 model_name=name, colour=colour,
+                y_pred_precomputed=y_pred_pre,
+                plot_subtitle="Train",
             )
             model_results.append({
                 "model_name": name,
@@ -333,6 +386,27 @@ class RegressorValidator:
             })
             all_overall_metrics.append(res["metrics"])
             model_names.append(name)
+
+            # ── Holdout per model ────────────────────────────────────────
+            if "X_holdout" in entry and "y_holdout" in entry:
+                has_holdout = True
+                X_ho = np.asarray(entry["X_holdout"], dtype=np.float32)
+                y_ho = np.asarray(entry["y_holdout"], dtype=np.float32)
+                y_pred_ho = entry.get("y_pred_holdout")
+
+                ho_res = self._evaluate_single_model(
+                    model=model, X=X_ho, y_true=y_ho,
+                    label_names=label_names_for_model, y_scaler=y_scaler,
+                    model_name=f"{name} (Holdout)", colour=colour,
+                    y_pred_precomputed=y_pred_ho,
+                    plot_subtitle="Holdout",
+                )
+                holdout_model_results.append({
+                    "model_name": name,
+                    "metrics": ho_res["metrics"],
+                    "per_label": ho_res["per_label"],
+                })
+                all_holdout_metrics.append(ho_res["metrics"])
 
         # Generate comparison bar chart
         bar_plot_b64 = self.comparison_bar_plot(model_names, all_overall_metrics)
@@ -343,6 +417,13 @@ class RegressorValidator:
             "model_results": model_results,
             "comparison_bar_plot": bar_plot_b64,
         }
+
+        if has_holdout and holdout_model_results:
+            holdout_bar = self.comparison_bar_plot(model_names, all_holdout_metrics)
+            self._results["holdout"] = {
+                "model_results": holdout_model_results,
+                "comparison_bar_plot": holdout_bar,
+            }
 
         logger.info(
             "RegressorValidator (multi): %d models  [%s]",

@@ -41,7 +41,7 @@ export type ClassifierModel =
   | 'GradientBoosting'
   | 'LogisticRegression';
 
-export type FeatureEngineeringMethod = 'PCA' | 'GeometrySampler' | 'Scaler' | 'DataSplitter' | 'Autoencoder';
+export type FeatureEngineeringMethod = 'PCA' | 'GeometrySampler' | 'Scaler' | 'DataSplitter' | 'Autoencoder' | 'TrainTestSplit';
 
 export type ScalerType = 'MinMax' | 'Standard' | 'LogTransform';
 
@@ -80,14 +80,18 @@ export interface InputNodeData extends Record<string, unknown> {
    * For CSV: { format: 'csv', columns: [...] }
    * For H5:  { format: 'h5', groups: { ... } }
    */
-  structure?: import('../api').DataStructure;
+  structure?: import('./api').DataStructure;
 }
+
+export type RegressorRole = 'transform' | 'final';
 
 export interface RegressorNodeData extends Record<string, unknown> {
   label: string;
   category: 'regressor';
   model: RegressorModel;
   hyperparams: HyperParams;
+  /** Whether this regressor transforms data (pass-through) or is the final predictor. */
+  role: RegressorRole;
 }
 
 export interface ClassifierNodeData extends Record<string, unknown> {
@@ -126,6 +130,18 @@ export interface HPTunerNodeData extends Record<string, unknown> {
   hyperparams: HyperParams;
 }
 
+export interface RBLNodeData extends Record<string, unknown> {
+  label: string;
+  category: 'rbl';
+  lambda_kernel: number;
+  lambda_residual: number;
+}
+
+export interface RBLAggregatorNodeData extends Record<string, unknown> {
+  label: string;
+  category: 'rbl_aggregator';
+}
+
 export type SurroNodeData =
   | InputNodeData
   | RegressorNodeData
@@ -133,7 +149,9 @@ export type SurroNodeData =
   | ValidatorNodeData
   | FeatureEngineeringNodeData
   | InferenceNodeData
-  | HPTunerNodeData;
+  | HPTunerNodeData
+  | RBLNodeData
+  | RBLAggregatorNodeData;
 
 // ─── Typed aliases for React Flow ───────────────────────────────────────────
 
@@ -174,6 +192,11 @@ export interface ValidatorLabelResult {
 export interface ValidatorResult {
   metrics: Record<string, number>;
   per_label: ValidatorLabelResult[];
+  /** Holdout evaluation results (present when a TrainTestSplit was used) */
+  holdout?: {
+    metrics: Record<string, number>;
+    per_label: ValidatorLabelResult[];
+  };
 }
 
 /** Per-model result entry in a multi-model comparison */
@@ -190,6 +213,11 @@ export interface MultiModelValidatorResult {
   model_results: MultiModelEntry[];
   /** base64-encoded grouped bar chart comparing metrics */
   comparison_bar_plot: string;
+  /** Holdout evaluation results (present when a TrainTestSplit was used) */
+  holdout?: {
+    model_results: MultiModelEntry[];
+    comparison_bar_plot: string;
+  };
 }
 
 /** Per-node result from a pipeline run */
