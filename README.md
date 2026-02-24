@@ -8,9 +8,10 @@
 
 # Demo 
 
-Visual workflow builder for surrogate models. Drag-and-drop ML pipelines on a canvas — regressors, classifiers, feature engineering, validation, innovative agent-based HP tuning — then execute the pipeline from data loading (CAD geometries, scalars, matrices, tensors, etc.) to model evaluation and production-ready models.
+Visual workflow builder for surrogate models. Drag-and-drop ML pipelines on a canvas — regressors, classifiers, feature engineering, validation, innovative agent-based HP tuning — then execute the pipeline.
+Includes data loading (CAD geometries, scalars, matrices, tensors, etc.) to model evaluation and production-ready model deploy in a lightweight fashion.
 
-I have read so many papers where I always learned the most by looking at the visual abstract. I want to create an environment in which one can draw such a visual abstract but also have an agent working on top, replacing costly HP tuning with an agent-based approach using just a few evaluations. Furthermore, I want to develop agent-based surrogate modeling using reliable building blocks.
+I have read so many papers where I always looked most of the time at the visual abstract. For me that worked best to understand the idea of the structure because it guides the reader to the importatnt aspects (of course the math is needed to fully understand). So why not drawing surrogate pipelines? I want to create an environment in which one can draw such a visual abstract but also support that step with an agent working on top, replacing costly HP tuning with an agent-based approach using just a few evaluations (vision). Furthermore, I want to develop agent-based surrogate modeling using reliable building blocks - so this repo can also be seen as some kind of a tool.
 
 This is a demo version — want to know the current status? Just reach out to me on LinkedIn → Bernhard Einberger.
 
