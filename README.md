@@ -21,13 +21,10 @@ Built with React / React Flow (frontend) and Python (backend).
 
 ![SurroMod Interface](./doc/pics/interface_003.png)
 
-## Video of simple Neural Network (MLP) Training on concrete dataset comparing scaler variations - working & highlighting under-development agent-based hp tuning
+## Video of simple models trained on concrete dataset (dev version) - working 
 
-![Workflow](./doc/pics/workflow_simple_004.gif)
+![Workflow](./doc/pics/simple_workflow.gif)
 
-## Video of advanced workflow - concept
-
-![Workflow](./doc/pics/workflow_full_002.gif)
 
 ## Screenshot of 2d field prediction - in development
 
