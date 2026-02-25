@@ -16,6 +16,10 @@ import logging
 import math
 from typing import Any
 
+import matplotlib
+matplotlib.use("Agg")  # headless backend – must be set before pyplot import
+import matplotlib.pyplot as plt  # noqa: E402
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -100,10 +104,6 @@ class RegressorValidator:
         plot_subtitle: str | None = None,
     ) -> str:
         """Return a base64-encoded PNG of a true-vs-predicted scatter plot."""
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
         fig, ax = plt.subplots(figsize=(4.5, 4.0))
         ax.scatter(y_true, y_pred, alpha=0.5, s=14, edgecolors="none", c=colour)
 
@@ -144,10 +144,6 @@ class RegressorValidator:
 
         Returns a base64-encoded PNG.
         """
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
         metric_keys = list(all_metrics[0].keys())
         n_metrics = len(metric_keys)
         n_models = len(model_names)

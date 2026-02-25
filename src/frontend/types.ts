@@ -123,11 +123,44 @@ export interface InferenceNodeData extends Record<string, unknown> {
   batchSize: number;
 }
 
+/** Description of a single hyperparameter eligible for agent-based tuning. */
+export interface HPTuneParam {
+  key: string;
+  type: 'number' | 'string' | 'boolean';
+  currentValue: string | number | boolean;
+  selected: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: string[];
+}
+
+/** A single iteration result from agent-based HP tuning. */
+export interface HPTuningIterationResult {
+  iteration: number;
+  config: Record<string, string | number | boolean>;
+  score: number;
+}
+
 export interface HPTunerNodeData extends Record<string, unknown> {
   label: string;
   category: 'hp_tuner';
   method: HPTunerMethod;
   hyperparams: HyperParams;
+  /** Node ID of the connected predictor (auto-detected from edges). */
+  connectedPredictorId?: string;
+  /** Hyperparameters loadable from the connected predictor. */
+  tunableParams?: HPTuneParam[];
+  /** Current tuning status for UI feedback. */
+  tuningStatus?: 'idle' | 'loading-hps' | 'running' | 'done' | 'error';
+  /** Full iteration history. */
+  tuningResults?: HPTuningIterationResult[];
+  /** Best HP config found. */
+  bestConfig?: Record<string, string | number | boolean>;
+  /** Best metric score found. */
+  bestScore?: number;
+  /** Error message if tuning failed. */
+  tuningError?: string;
 }
 
 export interface RBLNodeData extends Record<string, unknown> {
@@ -225,4 +258,5 @@ export type NodeResult =
   | { status: string }
   | { metrics?: Record<string, number>; is_trained?: boolean }
   | ValidatorResult
-  | MultiModelValidatorResult;
+  | MultiModelValidatorResult
+  | { tuning_results: HPTuningIterationResult[]; best_config: Record<string, string | number | boolean>; best_score: number };

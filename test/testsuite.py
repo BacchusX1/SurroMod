@@ -56,6 +56,46 @@ def _workflow_ids() -> list[str]:
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
+def _normalise_edges(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Apply the same normalisation that the frontend performs before
+    sending edges to the backend:
+
+    1. **Deduplicate by edge ID** – pickled workflows may contain the
+       same edge twice (once without ``targetHandle``, once with it).
+       React Flow silently deduplicates by ID when loading into the
+       store; we must do the same.  The *most complete* version (i.e.
+       the one with more keys) wins so that ``targetHandle`` is retained.
+    2. **Strip to API shape** – the frontend only sends ``source``,
+       ``target``, ``sourceHandle`` and ``targetHandle`` to the backend
+       (see ``store.ts → runPipeline``).  Passing extra fields like
+       ``id`` can trigger legacy fallback-parsing in the executor that
+       the frontend never hits.
+    """
+    # Deduplicate: keep the version with the most keys per edge ID
+    by_id: dict[str, dict[str, Any]] = {}
+    for e in edges:
+        eid = e.get("id", id(e))
+        prev = by_id.get(eid)
+        if prev is None or len(e) > len(prev):
+            by_id[eid] = e
+
+    # Project to the four fields the frontend sends to /api/pipeline/run
+    normalised: list[dict[str, Any]] = []
+    for e in by_id.values():
+        cleaned: dict[str, Any] = {
+            "source": e["source"],
+            "target": e["target"],
+        }
+        if e.get("sourceHandle") is not None:
+            cleaned["sourceHandle"] = e["sourceHandle"]
+        if e.get("targetHandle") is not None:
+            cleaned["targetHandle"] = e["targetHandle"]
+        normalised.append(cleaned)
+
+    return normalised
+
+
 def _load_workflow(filename: str) -> dict[str, Any]:
     """Unpickle a workflow and restore its embedded data files."""
     path = WORKFLOWS_DIR / filename
@@ -74,6 +114,9 @@ def _load_workflow(filename: str) -> dict[str, Any]:
         dest = UPLOADS_DIR / file_id
         if not dest.exists():
             dest.write_bytes(content)
+
+    # Normalise edges to match frontend behaviour (dedup + strip)
+    bundle["edges"] = _normalise_edges(bundle.get("edges", []))
 
     return bundle
 
@@ -165,25 +208,25 @@ def test_workflow_r2(workflow_file: str, config: dict[str, Any]) -> None:
         actual_models.extend(_extract_model_r2_values(vresult))
 
     # ── 4. Assert R² barriers ────────────────────────────────────────────
-    assert len(actual_models) == len(expected_models), (
-        f"Workflow '{workflow_file}': expected {len(expected_models)} "
-        f"model(s) but got {len(actual_models)}.\n"
-        f"  Expected: {[m['name'] for m in expected_models]}\n"
-        f"  Actual:   {[name for name, _ in actual_models]}"
+    #  Match by model name (order-independent) so the test is robust
+    #  against topological-sort differences between frontend and test.
+    expected_by_name: dict[str, float] = {
+        m["name"]: m["min_r2"] for m in expected_models
+    }
+    actual_names = {name for name, _ in actual_models}
+    expected_names = set(expected_by_name.keys())
+
+    assert actual_names == expected_names, (
+        f"Workflow '{workflow_file}': model name mismatch.\n"
+        f"  Expected: {sorted(expected_names)}\n"
+        f"  Actual:   {sorted(actual_names)}"
     )
 
-    for idx, ((actual_name, actual_r2), expected) in enumerate(
-        zip(actual_models, expected_models)
-    ):
-        exp_name = expected["name"]
-        min_r2 = expected["min_r2"]
+    for idx, (actual_name, actual_r2) in enumerate(actual_models):
+        min_r2 = expected_by_name[actual_name]
 
-        assert actual_name == exp_name, (
-            f"Model #{idx} name mismatch: expected '{exp_name}', "
-            f"got '{actual_name}'"
-        )
         assert actual_r2 >= min_r2, (
-            f"Workflow '{workflow_file}', model '{actual_name}' (#{idx}): "
+            f"Workflow '{workflow_file}', model '{actual_name}': "
             f"R² = {actual_r2:.6f} < minimum {min_r2}"
         )
 

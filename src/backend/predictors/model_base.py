@@ -311,8 +311,11 @@ class ModelBase(abc.ABC):
 
         X_arr = np.asarray(X)
         y_arr = np.asarray(y)
+        if self._seed is None:
+            logger.warning(" Seed in model base set to 42 as no seed was passed")
+        seed = self._seed if self._seed is not None else 42
         kf = KFold(n_splits=n_splits, shuffle=True,
-                   random_state=self._seed if self._seed is not None else 42)
+                   random_state=seed)
 
         fold_metrics: dict[str, list[float]] = {}
 

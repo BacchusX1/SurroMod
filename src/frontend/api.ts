@@ -157,3 +157,59 @@ export async function listWorkflows(): Promise<WorkflowListResult> {
   const res = await fetch('/api/workflow/list');
   return res.json();
 }
+
+// ─── Agent-Based HP Tuning ──────────────────────────────────────────────────
+
+export interface HPTuningDataInfo {
+  n_features: number;
+  n_labels: number;
+  feature_names: string[];
+  label_names: string[];
+  input_kind: string;
+  file_name: string;
+  /** Upload file ID so backend can read the actual file for n_samples / dtypes */
+  source: string;
+  holdout_ratio?: number;
+}
+
+export interface HPTuningRunRequest {
+  nodes: any[];
+  edges: any[];
+  tuner_node_id: string;
+  predictor_node_id: string;
+  selected_params: {
+    key: string;
+    type: string;
+    currentValue: string | number | boolean;
+    min?: number;
+    max?: number;
+    step?: number;
+    options?: string[];
+  }[];
+  n_iterations: number;
+  exploration_rate: number;
+  scoring_metric: string;
+  seed?: number | null;
+  data_info?: HPTuningDataInfo;
+}
+
+export interface HPTuningRunResult {
+  ok: boolean;
+  history?: { iteration: number; config: Record<string, any>; score: number }[];
+  best_config?: Record<string, any>;
+  best_score?: number;
+  error?: string;
+}
+
+/**
+ * Run agent-based HP tuning via the local LLM.
+ * This is a long-running request — progress is streamed via the SSE log endpoint.
+ */
+export async function runAgentHPTuning(req: HPTuningRunRequest): Promise<HPTuningRunResult> {
+  const res = await fetch('/api/hp-tuner/agent/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  return res.json();
+}

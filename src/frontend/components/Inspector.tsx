@@ -12,13 +12,15 @@ import type {
   RBLNodeData,
   RBLAggregatorNodeData,
   HyperParams,
+  HPTuneParam,
+  HPTuningIterationResult,
   ValidatorResult,
   MultiModelValidatorResult,
   MultiModelEntry,
 } from '../types';
 import { categoryColor, advancedKeys } from '../utils';
-import { uploadFile, fetchStructure } from '../api';
-import type { DataStructure } from '../api';
+import { uploadFile, fetchStructure, runAgentHPTuning } from '../api';
+import type { DataStructure, HPTuningDataInfo } from '../api';
 
 // ─── Hyperparameter Editor ──────────────────────────────────────────────────
 
@@ -462,6 +464,535 @@ function TabbedHyperParams({
     </>
   );
 }
+
+// ─── Agent-Based HP Tuner UI ────────────────────────────────────────────────
+
+/** Default numeric ranges for common hyperparameters */
+const defaultNumericRanges: Record<string, { min: number; max: number; step?: number }> = {
+  learning_rate: { min: 0.00001, max: 0.1, step: 0.00001 },
+  epochs: { min: 10, max: 1000, step: 1 },
+  hidden_layers: { min: 1, max: 10, step: 1 },
+  neurons_per_layer: { min: 8, max: 512, step: 8 },
+  batch_size: { min: 4, max: 512, step: 4 },
+  dropout: { min: 0.0, max: 0.8, step: 0.05 },
+  alpha: { min: 0.001, max: 100, step: 0.001 },
+  gamma: { min: 0.001, max: 10, step: 0.001 },
+  degree: { min: 1, max: 10, step: 1 },
+  weight_decay: { min: 0, max: 0.1, step: 0.001 },
+  C: { min: 0.01, max: 100, step: 0.01 },
+  n_estimators: { min: 10, max: 500, step: 10 },
+  max_depth: { min: 1, max: 50, step: 1 },
+  hidden_size: { min: 8, max: 512, step: 8 },
+  num_layers: { min: 1, max: 10, step: 1 },
+  gradient_clipping: { min: 0, max: 10, step: 0.1 },
+  latent_dim: { min: 2, max: 128, step: 1 },
+  n_components: { min: 1, max: 50, step: 1 },
+  n_neighbors: { min: 1, max: 50, step: 1 },
+  min_samples_split: { min: 2, max: 20, step: 1 },
+  min_samples_leaf: { min: 1, max: 20, step: 1 },
+  subsample: { min: 0.1, max: 1.0, step: 0.05 },
+  max_iter: { min: 50, max: 2000, step: 50 },
+  lr_scheduler_step_size: { min: 1, max: 50, step: 1 },
+  lr_scheduler_gamma: { min: 0.01, max: 1.0, step: 0.01 },
+  lr_scheduler_patience: { min: 1, max: 50, step: 1 },
+  early_stopping_patience: { min: 1, max: 50, step: 1 },
+  physics_loss_weight: { min: 0.001, max: 10, step: 0.001 },
+  output_dim: { min: 1, max: 256, step: 1 },
+};
+
+/**
+ * Traverse the pipeline graph backwards from a given node to find all
+ * upstream Input nodes and any TrainTestSplit node, then collect training
+ * data metadata (feature/label names, input kind, holdout ratio, etc.).
+ */
+function collectDataInfo(
+  startNodeId: string,
+  nodes: import('../types').SurroNode[],
+  edges: import('../types').SurroEdge[],
+): HPTuningDataInfo | undefined {
+  // Build adjacency: target → sources (upstream direction)
+  const upstreamMap = new Map<string, Set<string>>();
+  for (const e of edges) {
+    if (!upstreamMap.has(e.target)) upstreamMap.set(e.target, new Set());
+    upstreamMap.get(e.target)!.add(e.source);
+  }
+
+  // BFS / DFS backwards from startNodeId
+  const visited = new Set<string>();
+  const queue = [startNodeId];
+  const inputNodes: import('../types').SurroNode[] = [];
+  let holdoutRatio: number | undefined;
+
+  while (queue.length > 0) {
+    const current = queue.pop()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    const node = nodes.find((n) => n.id === current);
+    if (node) {
+      const d = node.data as Record<string, unknown>;
+      const cat = d.category as string | undefined;
+
+      if (cat === 'input') {
+        inputNodes.push(node);
+      }
+
+      // Check for TrainTestSplit to extract holdout_ratio
+      if (
+        cat === 'feature_engineering' &&
+        (d as FeatureEngineeringNodeData).method === 'TrainTestSplit'
+      ) {
+        const hp = (d as FeatureEngineeringNodeData).hyperparams ?? {};
+        const hr = Number(hp.holdout_ratio);
+        if (!Number.isNaN(hr)) holdoutRatio = hr;
+      }
+    }
+
+    // Enqueue upstream neighbours
+    const parents = upstreamMap.get(current);
+    if (parents) {
+      for (const pid of parents) queue.push(pid);
+    }
+  }
+
+  if (inputNodes.length === 0) return undefined;
+
+  // Aggregate features / labels across all input nodes
+  const allFeatures: string[] = [];
+  const allLabels: string[] = [];
+  let inputKind = 'scalar';
+  let fileName = '';
+  let source = '';
+
+  for (const inp of inputNodes) {
+    const d = inp.data as InputNodeData;
+    allFeatures.push(...(d.features ?? []));
+    allLabels.push(...(d.labels ?? []));
+    if (d.inputKind) inputKind = d.inputKind;
+    if (d.fileName) fileName = d.fileName;
+    if (d.source) source = d.source;
+  }
+
+  return {
+    n_features: allFeatures.length,
+    n_labels: allLabels.length,
+    feature_names: allFeatures,
+    label_names: allLabels,
+    input_kind: inputKind,
+    file_name: fileName,
+    source,
+    holdout_ratio: holdoutRatio,
+  };
+}
+
+function AgentBasedTunerUI({
+  nodeId,
+  data,
+  nodes,
+  edges,
+  updateNodeData,
+  globalSeed,
+}: {
+  nodeId: string;
+  data: HPTunerNodeData;
+  nodes: import('../types').SurroNode[];
+  edges: import('../types').SurroEdge[];
+  updateNodeData: (id: string, partial: Partial<SurroNodeData>) => void;
+  globalSeed: number | null;
+}) {
+  const [tuningRunning, setTuningRunning] = useState(false);
+
+  // ── Find connected predictor ──────────────────────────────────────────
+  const findConnectedPredictor = useCallback(() => {
+    const connectedIds = new Set<string>();
+    for (const e of edges) {
+      if (e.source === nodeId) connectedIds.add(e.target);
+      if (e.target === nodeId) connectedIds.add(e.source);
+    }
+    for (const n of nodes) {
+      if (connectedIds.has(n.id)) {
+        const cat = (n.data as any).category;
+        if (cat === 'regressor' || cat === 'classifier') return n;
+      }
+    }
+    return null;
+  }, [nodeId, nodes, edges]);
+
+  // ── Load HPs from connected predictor ─────────────────────────────────
+  const loadPredictorHPs = useCallback(() => {
+    const predictor = findConnectedPredictor();
+    if (!predictor) {
+      alert('No regressor or classifier connected. Please connect one to this HP Tuner node.');
+      return;
+    }
+
+    const predData = predictor.data as RegressorNodeData | ClassifierNodeData;
+    const hp = predData.hyperparams ?? {};
+
+    const tunableParams: HPTuneParam[] = Object.entries(hp).map(([key, value]) => {
+      const type: HPTuneParam['type'] =
+        typeof value === 'number' ? 'number'
+        : typeof value === 'boolean' ? 'boolean'
+        : 'string';
+
+      const param: HPTuneParam = {
+        key,
+        type,
+        currentValue: value,
+        selected: false,
+      };
+
+      if (type === 'number') {
+        const range = defaultNumericRanges[key];
+        if (range) {
+          param.min = range.min;
+          param.max = range.max;
+          param.step = range.step;
+        } else {
+          const v = value as number;
+          if (Number.isInteger(v) && v > 0) {
+            param.min = Math.max(1, Math.floor(v / 5));
+            param.max = v * 5;
+            param.step = 1;
+          } else if (v > 0) {
+            param.min = Math.max(1e-8, v / 10);
+            param.max = v * 10;
+            param.step = v / 100;
+          } else {
+            param.min = 0;
+            param.max = 1;
+            param.step = 0.01;
+          }
+        }
+      }
+
+      if (type === 'string' && selectOptions[key]) {
+        param.options = selectOptions[key].map((o) => o.value);
+      }
+
+      return param;
+    });
+
+    updateNodeData(nodeId, {
+      connectedPredictorId: predictor.id,
+      tunableParams,
+      tuningStatus: 'idle',
+      tuningResults: undefined,
+      bestConfig: undefined,
+      bestScore: undefined,
+      tuningError: undefined,
+    } as Partial<SurroNodeData>);
+  }, [findConnectedPredictor, nodeId, updateNodeData]);
+
+  // ── Toggle HP selection ───────────────────────────────────────────────
+  const toggleParamSelection = useCallback(
+    (key: string) => {
+      const params = data.tunableParams ?? [];
+      const updated = params.map((p) =>
+        p.key === key ? { ...p, selected: !p.selected } : p,
+      );
+      updateNodeData(nodeId, { tunableParams: updated } as Partial<SurroNodeData>);
+    },
+    [data.tunableParams, nodeId, updateNodeData],
+  );
+
+  // ── Update param range ────────────────────────────────────────────────
+  const updateParamRange = useCallback(
+    (key: string, field: 'min' | 'max' | 'step', value: number) => {
+      const params = data.tunableParams ?? [];
+      const updated = params.map((p) =>
+        p.key === key ? { ...p, [field]: value } : p,
+      );
+      updateNodeData(nodeId, { tunableParams: updated } as Partial<SurroNodeData>);
+    },
+    [data.tunableParams, nodeId, updateNodeData],
+  );
+
+  // ── Start tuning ─────────────────────────────────────────────────────
+  const startTuning = useCallback(async () => {
+    const selected = (data.tunableParams ?? []).filter((p) => p.selected);
+    if (selected.length === 0) {
+      alert('Please select at least one hyperparameter to tune.');
+      return;
+    }
+
+    const predictorId = data.connectedPredictorId;
+    if (!predictorId) {
+      alert('No connected predictor. Please load HPs first.');
+      return;
+    }
+
+    setTuningRunning(true);
+    updateNodeData(nodeId, {
+      tuningStatus: 'running',
+      tuningError: undefined,
+    } as Partial<SurroNodeData>);
+
+    try {
+      const storeState = useStore.getState();
+
+      // ── Collect training data metadata from upstream Input nodes ───
+      const dataInfo = collectDataInfo(
+        predictorId,
+        storeState.nodes,
+        storeState.edges,
+      );
+
+      const payload = {
+        nodes: storeState.nodes.map((n) => ({
+          id: n.id,
+          type: n.type,
+          data: n.data,
+        })),
+        edges: storeState.edges.map((e) => ({
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourceHandle,
+          targetHandle: e.targetHandle,
+        })),
+        tuner_node_id: nodeId,
+        predictor_node_id: predictorId,
+        selected_params: selected.map((p) => ({
+          key: p.key,
+          type: p.type,
+          currentValue: p.currentValue,
+          min: p.min,
+          max: p.max,
+          step: p.step,
+          options: p.options,
+        })),
+        n_iterations: Number(data.hyperparams.n_iterations) || 50,
+        exploration_rate: Number(data.hyperparams.exploration_rate) || 0.1,
+        scoring_metric: String(data.hyperparams.scoring_metric || 'r2'),
+        seed: globalSeed,
+        data_info: dataInfo,
+      };
+
+      const result = await runAgentHPTuning(payload);
+
+      if (result.ok) {
+        updateNodeData(nodeId, {
+          tuningStatus: 'done',
+          tuningResults: result.history as HPTuningIterationResult[],
+          bestConfig: result.best_config as Record<string, string | number | boolean>,
+          bestScore: result.best_score,
+          tuningError: undefined,
+        } as Partial<SurroNodeData>);
+      } else {
+        updateNodeData(nodeId, {
+          tuningStatus: 'error',
+          tuningError: result.error ?? 'Unknown error',
+        } as Partial<SurroNodeData>);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      updateNodeData(nodeId, {
+        tuningStatus: 'error',
+        tuningError: msg,
+      } as Partial<SurroNodeData>);
+    } finally {
+      setTuningRunning(false);
+    }
+  }, [data, nodeId, updateNodeData, globalSeed]);
+
+  // ── Apply best config to predictor ────────────────────────────────────
+  const applyBestConfig = useCallback(() => {
+    const predictorId = data.connectedPredictorId;
+    const bestConfig = data.bestConfig;
+    if (!predictorId || !bestConfig) return;
+
+    const predictor = nodes.find((n) => n.id === predictorId);
+    if (!predictor) return;
+
+    const predData = predictor.data as RegressorNodeData | ClassifierNodeData;
+    const updatedHP = { ...predData.hyperparams, ...bestConfig };
+    updateNodeData(predictorId, { hyperparams: updatedHP } as Partial<SurroNodeData>);
+  }, [data.connectedPredictorId, data.bestConfig, nodes, updateNodeData]);
+
+  const tunableParams = data.tunableParams ?? [];
+  const selectedCount = tunableParams.filter((p) => p.selected).length;
+  const tuningStatus = data.tuningStatus ?? 'idle';
+
+  return (
+    <>
+      <div className="inspector__section-title" style={{ marginTop: 12 }}>
+        Agent-Based Tuning
+      </div>
+
+      {/* ── Load HPs button ──────────────────────────────────────────── */}
+      <button
+        className="btn btn--load-columns"
+        onClick={loadPredictorHPs}
+        style={{ marginBottom: 8, width: '100%' }}
+      >
+        📋 Load HPs from Connected Predictor
+      </button>
+
+      {data.connectedPredictorId && (
+        <p className="inspector__hint" style={{ fontSize: '0.72rem', opacity: 0.6, margin: '0 0 6px' }}>
+          Connected to: {nodes.find((n) => n.id === data.connectedPredictorId)?.data?.label ?? data.connectedPredictorId}
+        </p>
+      )}
+
+      {/* ── Tunable parameters list ──────────────────────────────────── */}
+      {tunableParams.length > 0 && (
+        <>
+          <div className="inspector__section-title">
+            Select HPs to Tune ({selectedCount}/{tunableParams.length})
+          </div>
+          <div style={{ maxHeight: 260, overflowY: 'auto', marginBottom: 8 }}>
+            {tunableParams.map((p) => (
+              <div key={p.key} style={{ marginBottom: 6, padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.82rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={p.selected}
+                    onChange={() => toggleParamSelection(p.key)}
+                  />
+                  <span style={{ flex: 1, fontWeight: p.selected ? 600 : 400 }}>
+                    {p.key.replace(/_/g, ' ')}
+                  </span>
+                  <span style={{ opacity: 0.5, fontSize: '0.72rem' }}>
+                    {p.type === 'number' ? String(p.currentValue) : p.type === 'boolean' ? (p.currentValue ? 'true' : 'false') : String(p.currentValue)}
+                  </span>
+                </label>
+
+                {/* ── Range controls for selected numeric params ────── */}
+                {p.selected && p.type === 'number' && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, marginTop: 4, marginLeft: 22 }}>
+                    <label style={{ fontSize: '0.7rem' }}>
+                      min
+                      <input
+                        type="number"
+                        value={p.min ?? 0}
+                        step={p.step ?? 0.01}
+                        style={{ width: '100%', fontSize: '0.72rem' }}
+                        onChange={(e) => updateParamRange(p.key, 'min', parseFloat(e.target.value) || 0)}
+                      />
+                    </label>
+                    <label style={{ fontSize: '0.7rem' }}>
+                      max
+                      <input
+                        type="number"
+                        value={p.max ?? 1}
+                        step={p.step ?? 0.01}
+                        style={{ width: '100%', fontSize: '0.72rem' }}
+                        onChange={(e) => updateParamRange(p.key, 'max', parseFloat(e.target.value) || 1)}
+                      />
+                    </label>
+                    <label style={{ fontSize: '0.7rem' }}>
+                      step
+                      <input
+                        type="number"
+                        value={p.step ?? 0.01}
+                        style={{ width: '100%', fontSize: '0.72rem' }}
+                        onChange={(e) => updateParamRange(p.key, 'step', parseFloat(e.target.value) || 0.01)}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {/* ── Show options for selected string params ────── */}
+                {p.selected && p.type === 'string' && p.options && (
+                  <p style={{ fontSize: '0.7rem', opacity: 0.5, marginLeft: 22, marginTop: 2 }}>
+                    Options: {p.options.join(', ')}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* ── Run / status ─────────────────────────────────────────── */}
+          <button
+            className="btn"
+            onClick={startTuning}
+            disabled={tuningRunning || selectedCount === 0}
+            style={{
+              width: '100%',
+              marginBottom: 6,
+              background: tuningRunning ? '#555' : '#2dd4bf',
+              color: '#000',
+              fontWeight: 600,
+            }}
+          >
+            {tuningRunning ? '⏳ Tuning in progress…' : '▶ Start Tuning'}
+          </button>
+
+          {tuningStatus === 'error' && data.tuningError && (
+            <p style={{ color: '#f87171', fontSize: '0.78rem', margin: '4px 0' }}>
+              Error: {data.tuningError}
+            </p>
+          )}
+        </>
+      )}
+
+      {/* ── Results ──────────────────────────────────────────────────── */}
+      {data.tuningResults && data.tuningResults.length > 0 && (
+        <>
+          <div className="inspector__section-title" style={{ marginTop: 8 }}>
+            Tuning Results ({data.tuningResults.length} iterations)
+          </div>
+
+          {data.bestConfig && data.bestScore != null && (
+            <div style={{ background: 'rgba(45,212,191,0.12)', borderRadius: 6, padding: '6px 8px', marginBottom: 8 }}>
+              <div style={{ fontWeight: 600, fontSize: '0.82rem', marginBottom: 4 }}>
+                🏆 Best: {data.hyperparams.scoring_metric} = {data.bestScore.toFixed(6)}
+              </div>
+              <div style={{ fontSize: '0.72rem', opacity: 0.8 }}>
+                {Object.entries(data.bestConfig).map(([k, v]) => (
+                  <span key={k} style={{ marginRight: 8 }}>{k.replace(/_/g, ' ')}: <b>{String(v)}</b></span>
+                ))}
+              </div>
+              <button
+                className="btn"
+                onClick={applyBestConfig}
+                style={{ marginTop: 6, fontSize: '0.75rem', padding: '3px 10px' }}
+              >
+                ✅ Apply Best to Predictor
+              </button>
+            </div>
+          )}
+
+          {/* ── Iteration history table ──────────────────────────────── */}
+          <div style={{ maxHeight: 240, overflowY: 'auto', fontSize: '0.72rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
+                  <th style={{ textAlign: 'left', padding: '3px 4px' }}>#</th>
+                  <th style={{ textAlign: 'left', padding: '3px 4px' }}>Score</th>
+                  <th style={{ textAlign: 'left', padding: '3px 4px' }}>Config</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.tuningResults.map((r) => {
+                  const isBest = data.bestScore != null && Math.abs(r.score - data.bestScore) < 1e-10;
+                  return (
+                    <tr
+                      key={r.iteration}
+                      style={{
+                        borderBottom: '1px solid rgba(255,255,255,0.06)',
+                        background: isBest ? 'rgba(45,212,191,0.08)' : 'transparent',
+                      }}
+                    >
+                      <td style={{ padding: '3px 4px' }}>{r.iteration}</td>
+                      <td style={{ padding: '3px 4px', fontFamily: 'monospace' }}>{r.score.toFixed(6)}</td>
+                      <td style={{ padding: '3px 4px', opacity: 0.7 }}>
+                        {Object.entries(r.config)
+                          .map(([k, v]) => `${k}=${typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(4)) : v}`)
+                          .join(', ')}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 // ─── Inspector Panel ────────────────────────────────────────────────────────
 
 export default function Inspector() {
@@ -868,6 +1399,18 @@ export default function Inspector() {
               hyperparams={(data as HPTunerNodeData).hyperparams}
               onChange={handleHyperparamChange}
             />
+
+            {/* ── AgentBased-specific UI ─────────────────────────────────── */}
+            {(data as HPTunerNodeData).method === 'AgentBased' && (
+              <AgentBasedTunerUI
+                nodeId={selectedNodeId}
+                data={data as HPTunerNodeData}
+                nodes={nodes}
+                edges={useStore.getState().edges}
+                updateNodeData={updateNodeData}
+                globalSeed={useStore.getState().globalSeed}
+              />
+            )}
           </>
         )}
 

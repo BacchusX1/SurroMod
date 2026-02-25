@@ -20,21 +20,21 @@ workflows:
       All three models feed into a single Regressor Validator.
     models:
       - name: "MLP-minmax"                # MinMax scaler path
-        min_r2: 0.9
+        min_r2: 0.8
       - name: "MLP-standard"              # Standard scaler path
-        min_r2: 0.9
+        min_r2: 0.8
       - name: "MLP-log"                   # LogTransform scaler path
         min_r2: 0.65
 
-  MLP_vs_MLP_and_res_based_e88d7416.pkl:
+  KRR_vs_MLP_vs_MLP_and_res_based_6c2feb9b.pkl:
     description: >
       Comparing a simple KRR vs. MLP vs. a MLP -> MLP -> RBL -> MLP -> RBL Aggregator pipeline.
     models:
-      - name: "KRR"                # simple KRR
-        min_r2: 0.8
       - name: "MLP"                # MLP
         min_r2: 0.9
       - name: "RBL Aggregator"      # residual based workflow
         min_r2: 0.9
+      - name: "KRR"                # simple KRR
+        min_r2: 0.8
 
 

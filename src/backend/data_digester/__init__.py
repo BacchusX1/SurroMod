@@ -63,14 +63,8 @@ class DataDigester(ABC):
 
     def _resolve_source(self) -> Path:
         """Resolve the source to an actual file path (supports upload IDs)."""
-        # Check uploads directory first
-        root = Path(__file__).resolve().parent.parent.parent.parent  # → SurroMod/
-        uploads_dir = root / "uploads"
-        candidate = uploads_dir / self._source
-        if candidate.exists():
-            return candidate
-        # Fall back to raw path
-        return Path(self._source)
+        from src import resolve_upload_path
+        return resolve_upload_path(self._source)
 
     # ── pipeline interface ───────────────────────────────────────────────
 

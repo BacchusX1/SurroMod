@@ -112,12 +112,24 @@ def _resolve_target_handle(edge: dict[str, Any]) -> str:
         return th
     # Fallback: parse from React Flow edge ID (e.g.
     # "xy-edge__srcId-tgtIdrepresentations")
+    # Fallback: parse from React Flow edge ID (legacy data)
     eid = edge.get("id", "")
     tid = edge.get("target", "")
     if tid and tid in eid:
         suffix = eid.split(tid)[-1]
         if suffix in ("representations",):
+            logger.warning(
+                "Edge '%s' has no explicit targetHandle — resolved to '%s' "
+                "via edge-ID parsing (legacy fallback).",
+                eid, suffix,
+            )
             return suffix
+    logger.warning(
+        "Edge '%s' (source=%s → target=%s) has no targetHandle — "
+        "falling back to 'default'. If this is an RBL representations "
+        "edge, it will be misrouted.",
+        eid, edge.get("source", "?"), tid,
+    )
     return "default"
 
 
@@ -318,11 +330,11 @@ def _build_executor(node_data: dict[str, Any], seed: int | None = None) -> Any:
         return instance
 
     if category == "rbl":
-        from src.backend.rbl import RBLNode
+        from src.backend.feature_engineering.rbl import RBLNode
         return RBLNode(node_data)
 
     if category == "rbl_aggregator":
-        from src.backend.rbl import RBLAggregatorNode
+        from src.backend.feature_engineering.rbl import RBLAggregatorNode
         return RBLAggregatorNode(node_data)
 
     if category == "validator":
@@ -386,8 +398,8 @@ def run_pipeline(
         data = nd.get("data", nd)
         category = data.get("category")
 
-        if category in ("regressor", "validator", "rbl", "rbl_aggregator"):
-            continue  # handled in later phases
+        if category in ("regressor", "validator", "rbl", "rbl_aggregator", "hp_tuner"):
+            continue  # handled in later phases or externally (hp_tuner)
 
         logger.info("Pipeline: executing node '%s' (%s)", nid, category)
 

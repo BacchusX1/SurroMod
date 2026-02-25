@@ -27,7 +27,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 from pydantic import BaseModel
 
 # ── Ensure project root is importable ─────────────────────────────────────
@@ -84,7 +84,9 @@ class _LogBroadcaster(logging.Handler):
                     q.get_nowait()
                     q.put_nowait(msg)
                 except (asyncio.QueueEmpty, asyncio.QueueFull):
-                    pass
+                    logging.getLogger(__name__).debug(
+                        "SSE log queue full — dropped message for a subscriber."
+                    )
             except Exception:
                 dead.append(q)
         for q in dead:
@@ -141,13 +143,11 @@ def resolve_upload_path(source: str) -> Path:
     """
     Resolve a source string to an actual file path.
     Accepts either an upload ID (uuid-style filename in uploads/) or a raw path.
+
+    Delegates to the canonical implementation in :mod:`src`.
     """
-    # Check if it's an uploaded file ID (lives in UPLOAD_DIR)
-    candidate = UPLOAD_DIR / source
-    if candidate.exists():
-        return candidate
-    # Fall back to treating as a raw filesystem path
-    return Path(source)
+    from src import resolve_upload_path as _resolve
+    return _resolve(source)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
@@ -165,7 +165,10 @@ def pipeline_run(req: PipelineRequest) -> dict[str, Any]:
         return {"ok": True, **result}
     except Exception as exc:
         logger.error("Pipeline error:\n%s", traceback.format_exc())
-        return {"ok": False, "error": str(exc)}
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(exc)},
+        )
 
 
 @app.post("/api/data/structure")
@@ -192,7 +195,10 @@ def data_structure(req: StructureRequest) -> dict[str, Any]:
         return {"ok": True, "structure": struct}
     except Exception as exc:
         logger.error("Data structure error: %s", exc)
-        return {"ok": False, "error": str(exc)}
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(exc)},
+        )
 
 
 @app.post("/api/csv/columns")
@@ -207,7 +213,10 @@ def csv_columns(req: CSVColumnsRequest) -> dict[str, Any]:
         return {"ok": True, "columns": columns}
     except Exception as exc:
         logger.error("CSV columns error: %s", exc)
-        return {"ok": False, "error": str(exc)}
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(exc)},
+        )
 
 
 @app.post("/api/upload")
@@ -255,7 +264,10 @@ async def upload_file(file: UploadFile = File(...)) -> dict[str, Any]:
         }
     except Exception as exc:
         logger.error("Upload error: %s", exc)
-        return {"ok": False, "error": str(exc)}
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(exc)},
+        )
 
 
 @app.get("/api/logs/stream")
@@ -340,7 +352,10 @@ def workflow_save(req: WorkflowSaveRequest) -> dict[str, Any]:
         return {"ok": True, "fileId": file_id, "path": str(dest)}
     except Exception as exc:
         logger.error("Workflow save error: %s", exc)
-        return {"ok": False, "error": str(exc)}
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(exc)},
+        )
 
 
 @app.get("/api/workflow/download/{file_id}")
@@ -386,7 +401,10 @@ async def workflow_load(file: UploadFile = File(...)) -> dict[str, Any]:
         return {"ok": True, "name": name, "nodes": nodes, "edges": edges}
     except Exception as exc:
         logger.error("Workflow load error:\n%s", traceback.format_exc())
-        return {"ok": False, "error": str(exc)}
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(exc)},
+        )
 
 
 @app.get("/api/workflow/list")
@@ -398,7 +416,119 @@ def workflow_list() -> dict[str, Any]:
         return {"ok": True, "workflows": items}
     except Exception as exc:
         logger.error("Workflow list error: %s", exc)
-        return {"ok": False, "error": str(exc)}
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(exc)},
+        )
+
+
+# ── Agent-Based HP Tuning ────────────────────────────────────────────────
+
+class HPTunerAgentRunRequest(BaseModel):
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    tuner_node_id: str
+    predictor_node_id: str
+    selected_params: list[dict[str, Any]]
+    n_iterations: int = 50
+    exploration_rate: float = 0.1
+    scoring_metric: str = "r2"
+    seed: int | None = None
+    data_info: dict[str, Any] | None = None
+
+
+def _augment_data_info(raw_info: dict[str, Any] | None) -> dict[str, Any] | None:
+    """
+    Enrich the frontend-provided data_info with actual file statistics
+    (number of samples, column dtypes) by reading the uploaded file.
+    """
+    if raw_info is None:
+        return None
+
+    info = dict(raw_info)
+    source = info.get("source", "")
+
+    if not source:
+        return info
+
+    # Resolve the uploaded file path
+    file_path = UPLOAD_DIR / source
+    if not file_path.exists():
+        # Try as absolute path
+        file_path = Path(source)
+
+    if file_path.exists() and file_path.suffix.lower() == ".csv":
+        try:
+            import pandas as pd
+
+            df = pd.read_csv(file_path)
+            info["n_samples"] = len(df)
+
+            # Collect per-column dtype info for the feature + label columns
+            feature_names = info.get("feature_names", [])
+            label_names = info.get("label_names", [])
+            col_dtypes: dict[str, str] = {}
+            for col in feature_names + label_names:
+                if col in df.columns:
+                    dtype = df[col].dtype
+                    if pd.api.types.is_integer_dtype(dtype):
+                        col_dtypes[col] = "integer"
+                    elif pd.api.types.is_float_dtype(dtype):
+                        col_dtypes[col] = "float"
+                    elif pd.api.types.is_bool_dtype(dtype):
+                        col_dtypes[col] = "boolean"
+                    else:
+                        col_dtypes[col] = "categorical/string"
+            info["column_dtypes"] = col_dtypes
+
+            # Compute estimated training samples if holdout_ratio is known
+            holdout = info.get("holdout_ratio")
+            if holdout is not None:
+                info["n_train_samples"] = int(round(len(df) * (1.0 - float(holdout))))
+                info["n_holdout_samples"] = len(df) - info["n_train_samples"]
+
+        except Exception as exc:
+            logger.warning("Could not read data file for HP tuner info: %s", exc)
+
+    return info
+
+
+@app.post("/api/hp-tuner/agent/run")
+def hp_tuner_agent_run(req: HPTunerAgentRunRequest) -> dict[str, Any]:
+    """
+    Run agent-based HP tuning using a local LLM.
+
+    The LLM iteratively suggests hyperparameter configurations,
+    each of which is evaluated by running the full pipeline.
+    """
+    try:
+        from src.backend.hp_tuner.agent_based import AgentBasedTuner
+
+        config_path = Path(__file__).parent / "backend_config.yaml"
+        tuner = AgentBasedTuner(config_path=str(config_path))
+
+        # Augment data_info with actual file statistics
+        data_info = _augment_data_info(req.data_info)
+
+        result = tuner.run(
+            nodes=req.nodes,
+            edges=req.edges,
+            predictor_node_id=req.predictor_node_id,
+            selected_params=req.selected_params,
+            n_iterations=req.n_iterations,
+            exploration_rate=req.exploration_rate,
+            scoring_metric=req.scoring_metric,
+            seed=req.seed,
+            data_info=data_info,
+        )
+
+        return {"ok": True, **result}
+    except Exception as exc:
+        logger.error("HP tuning error:\n%s", traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(exc)},
+        )
 
 
 # ── CLI entry point ──────────────────────────────────────────────────────
