@@ -13,8 +13,6 @@ Includes data loading (CAD geometries, scalars, matrices, tensors, etc.) to mode
 
 I have read so many papers where I always looked most of the time at the visual abstract. For me that worked best to understand the idea of the structure because it guides the reader to the importatnt aspects (of course the math is needed to fully understand). So why not drawing surrogate pipelines? I want to create an environment in which one can draw such a visual abstract but also support that step with an agent working on top, replacing costly HP tuning with an agent-based approach using just a few evaluations (vision). Furthermore, I want to develop agent-based surrogate modeling using reliable building blocks - so this repo can also be seen as some kind of a tool.
 
-This is a demo version — want to know the current status? Just reach out to me on LinkedIn → Bernhard Einberger.
-
 Built with React / React Flow (frontend) and Python (backend).
 
 ## Screenshot
@@ -26,7 +24,7 @@ Built with React / React Flow (frontend) and Python (backend).
 ![Workflow](./doc/pics/simple_workflow.gif)
 
 
-## Screenshot of 2d field prediction - in development
+## Concept Screenshot of 2d field prediction 
 
 ![Workflow](./doc/pics/2d-field-prediction_001.png)
 
