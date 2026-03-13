@@ -13,6 +13,7 @@ llm:
 
   # GPU layers to offload: 0=CPU-only, -1=all layers, N=specific number
   # Env: LLM_N_GPU_LAYERS
+  # 25-35 for 8GB VRAM, 30-40 for 12GB VRAM, 40-50 for 16GB+ VRAM (these are rough estimates and can vary based on model architecture and other factors)
   n_gpu_layers: -1
 
   # Which GPU to use (for multi-GPU systems)

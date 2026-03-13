@@ -185,6 +185,7 @@ export interface HPTuningRunRequest {
     max?: number;
     step?: number;
     options?: string[];
+    discreteValues?: (number | string)[];
   }[];
   n_iterations: number;
   exploration_rate: number;
@@ -195,7 +196,7 @@ export interface HPTuningRunRequest {
 
 export interface HPTuningRunResult {
   ok: boolean;
-  history?: { iteration: number; config: Record<string, any>; score: number }[];
+  history?: { iteration: number; config: Record<string, any>; score: number; train_score?: number | null; holdout_score?: number | null; n_params?: number | null }[];
   best_config?: Record<string, any>;
   best_score?: number;
   error?: string;
@@ -206,10 +207,32 @@ export interface HPTuningRunResult {
  * This is a long-running request — progress is streamed via the SSE log endpoint.
  */
 export async function runAgentHPTuning(req: HPTuningRunRequest): Promise<HPTuningRunResult> {
-  const res = await fetch('/api/hp-tuner/agent/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(req),
-  });
-  return res.json();
+  let res: Response;
+  try {
+    res = await fetch('/api/hp-tuner/agent/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+  } catch (err) {
+    // Network error / connection reset (e.g. backend restart during tuning)
+    return { ok: false, error: `Network error: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  // Try to parse JSON — the response body may be empty/truncated if the
+  // backend connection was dropped ("socket hang up").
+  let body: any;
+  try {
+    body = await res.json();
+  } catch {
+    const status = res.status;
+    return {
+      ok: false,
+      error: status === 502 || status === 504
+        ? 'Backend connection lost — the server may have restarted. Please try again.'
+        : `Server returned invalid response (HTTP ${status}). Check the Output panel for backend logs.`,
+    };
+  }
+
+  return body as HPTuningRunResult;
 }

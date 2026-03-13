@@ -188,9 +188,18 @@ def start_dev_server(npm: str) -> None:
         "--host", "0.0.0.0",
         "--port", "8000",
         "--reload",
+        "--reload-dir", "src/backend",
     ]
     print(f"  → Backend: {' '.join(backend_cmd)}")
-    backend_proc = _run_background(backend_cmd, cwd=ROOT_DIR)
+    # Don't pipe stdout/stderr — let backend logs flow directly to the
+    # terminal.  Using _run_background (which pipes stdout) would cause
+    # the pipe buffer to fill up during long HP-tuning runs because nobody
+    # reads the backend pipe, blocking all logging and freezing requests.
+    backend_proc = subprocess.Popen(
+        backend_cmd,
+        cwd=ROOT_DIR,
+        start_new_session=True,
+    )
 
     # ── Start Vite frontend ──────────────────────────────────────────────
     print("\n  → Frontend: npm run dev\n")

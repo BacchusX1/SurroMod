@@ -1081,6 +1081,217 @@ body,
   border-radius: var(--radius) !important;
 }
 
+/* ─── HP Tuner Param Cards ───────────────────────────────────────────────── */
+
+.hp-tune-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 120px;
+  max-height: min(50vh, 500px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin-bottom: 8px;
+  padding-right: 2px;
+}
+
+.hp-tune-card {
+  flex-shrink: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.hp-tune-card--active {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.hp-tune-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.hp-tune-card__header input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.hp-tune-card__name {
+  flex: 1;
+  font-weight: 400;
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+.hp-tune-card--active .hp-tune-card__name {
+  font-weight: 600;
+}
+
+.hp-tune-card__current {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.hp-tune-card__body {
+  padding: 6px 10px 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Mode toggle (Range / Discrete) */
+
+.hp-tune-card__mode-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.hp-tune-card__mode-btn {
+  flex: 1;
+  padding: 4px 0;
+  font-size: 0.7rem;
+  font-family: var(--font);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.hp-tune-card__mode-btn:first-child {
+  border-right: 1px solid var(--border);
+}
+
+.hp-tune-card__mode-btn--active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.hp-tune-card__mode-btn:hover:not(.hp-tune-card__mode-btn--active) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* Range grid (min/max/step) using .inspector__field for theme alignment */
+
+.hp-tune-card__range-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+
+.hp-tune-card__range-grid .inspector__field input {
+  font-size: 0.78rem;
+  padding: 5px 8px;
+}
+
+.hp-tune-card__range-grid .inspector__field span {
+  font-size: 0.65rem;
+}
+
+/* Discrete mode field */
+
+.hp-tune-card__body > .inspector__field input[type='text'] {
+  font-size: 0.78rem;
+  padding: 5px 8px;
+}
+
+/* String option chips */
+
+.hp-tune-card__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.hp-tune-card__option-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s, color 0.15s;
+  user-select: none;
+}
+
+.hp-tune-card__option-chip:hover {
+  opacity: 0.7;
+}
+
+.hp-tune-card__option-chip--active {
+  opacity: 1;
+  background: rgba(45, 212, 191, 0.18);
+  border-color: #2dd4bf;
+  color: #2dd4bf;
+  font-weight: 600;
+}
+
+/* ─── HP Tuner Analytics ─────────────────────────────────────────────────── */
+
+.hp-analytics {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.hp-analytics__chart {
+  width: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(30, 30, 40, 0.35);
+}
+
+.hp-analytics__chart .js-plotly-plot .plotly .modebar {
+  top: 2px !important;
+  right: 2px !important;
+}
+
+.hp-analytics__section-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 4px 0 2px;
+}
+
+.hp-analytics__caveat {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 400;
+  opacity: 0.5;
+  font-style: italic;
+  margin-top: 1px;
+}
+
+.hp-analytics__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.hp-analytics__chart--half {
+  min-width: 0;
+}
+
 /* ─── Scrollbar styling ──────────────────────────────────────────────────── */
 
 ::-webkit-scrollbar {
@@ -1241,4 +1452,112 @@ body,
 .output-panel__line--debug {
   color: var(--text-dim);
   opacity: 0.65;
+}
+
+/* ─── Output Panel Tab Bar ───────────────────────────────────────────────── */
+
+.output-panel__tab-bar {
+  display: flex;
+  gap: 0;
+  background: var(--surface-1, #1a1a2e);
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+  padding: 0 8px;
+}
+
+.output-panel__tab {
+  padding: 4px 14px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.output-panel__tab:hover {
+  color: var(--text);
+}
+
+.output-panel__tab--active {
+  color: #2dd4bf;
+  border-bottom-color: #2dd4bf;
+}
+
+/* ─── HP Results Panel (inside OutputPanel) ──────────────────────────────── */
+
+.hp-results-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.hp-results-panel__tabs {
+  display: flex;
+  gap: 0;
+  padding: 4px 8px 0;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+  flex-shrink: 0;
+}
+
+.hp-results-panel__tab {
+  padding: 3px 12px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.hp-results-panel__tab:hover {
+  color: var(--text);
+}
+
+.hp-results-panel__tab--active {
+  color: #60a5fa;
+  border-bottom-color: #60a5fa;
+}
+
+.hp-results-panel__table-wrap {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 8px;
+}
+
+.hp-results-panel__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+
+.hp-results-panel__table th {
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  font-weight: 600;
+  color: var(--text-dim);
+  position: sticky;
+  top: 0;
+  background: var(--surface-1, #1a1a2e);
+}
+
+.hp-results-panel__table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.hp-results-panel__table td.mono {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.hp-results-panel__table td.dim {
+  opacity: 0.7;
+}
+
+.hp-results-panel__row--best {
+  background: rgba(45,212,191,0.08);
 }

@@ -133,6 +133,12 @@ export interface HPTuneParam {
   max?: number;
   step?: number;
   options?: string[];
+  /** Subset of options that the user has enabled for tuning (string params). */
+  selectedOptions?: string[];
+  /** When true, use discrete values instead of min/max/step range. */
+  useDiscreteValues?: boolean;
+  /** Semicolon-separated discrete values (parsed into an array for backend). */
+  discreteValues?: (number | string)[];
 }
 
 /** A single iteration result from agent-based HP tuning. */
@@ -140,6 +146,12 @@ export interface HPTuningIterationResult {
   iteration: number;
   config: Record<string, string | number | boolean>;
   score: number;
+  /** Train metric value (same as score for backward compat). */
+  train_score?: number | null;
+  /** Holdout metric value (null when no TrainTestSplit is used). */
+  holdout_score?: number | null;
+  /** Total trainable model parameters for this config. */
+  n_params?: number | null;
 }
 
 export interface HPTunerNodeData extends Record<string, unknown> {

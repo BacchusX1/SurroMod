@@ -601,6 +601,11 @@ function AgentBasedTunerUI({
   globalSeed: number | null;
 }) {
   const [tuningRunning, setTuningRunning] = useState(false);
+  // Local raw-text state for discrete value inputs so semicolons aren't
+  // immediately stripped by the parse→join round-trip on every keystroke.
+  const [discreteRawText, setDiscreteRawText] = useState<Record<string, string>>({});
+  // Visual feedback after applying best config
+  const [appliedFeedback, setAppliedFeedback] = useState(false);
 
   // ── Find connected predictor ──────────────────────────────────────────
   const findConnectedPredictor = useCallback(() => {
@@ -666,8 +671,13 @@ function AgentBasedTunerUI({
         }
       }
 
-      if (type === 'string' && selectOptions[key]) {
-        param.options = selectOptions[key].map((o) => o.value);
+      if (type === 'string') {
+        if (selectOptions[key]) {
+          param.options = selectOptions[key].map((o) => o.value);
+        } else {
+          // Fall back to a single-element list with the current value
+          param.options = [String(value)];
+        }
       }
 
       return param;
@@ -703,6 +713,67 @@ function AgentBasedTunerUI({
       const updated = params.map((p) =>
         p.key === key ? { ...p, [field]: value } : p,
       );
+      updateNodeData(nodeId, { tunableParams: updated } as Partial<SurroNodeData>);
+    },
+    [data.tunableParams, nodeId, updateNodeData],
+  );
+
+  // ── Toggle range ↔ discrete mode ─────────────────────────────────────
+  const toggleDiscreteMode = useCallback(
+    (key: string) => {
+      const params = data.tunableParams ?? [];
+      const updated = params.map((p) =>
+        p.key === key ? { ...p, useDiscreteValues: !p.useDiscreteValues } : p,
+      );
+      updateNodeData(nodeId, { tunableParams: updated } as Partial<SurroNodeData>);
+    },
+    [data.tunableParams, nodeId, updateNodeData],
+  );
+
+  // ── Update discrete values (local raw text + commit on blur) ─────────
+  const onDiscreteTextChange = useCallback(
+    (key: string, raw: string) => {
+      setDiscreteRawText((prev) => ({ ...prev, [key]: raw }));
+    },
+    [],
+  );
+
+  const commitDiscreteValues = useCallback(
+    (key: string) => {
+      const raw = discreteRawText[key];
+      if (raw === undefined) return;
+      const params = data.tunableParams ?? [];
+      const parsed = raw
+        .split(';')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .map((s) => {
+          const n = Number(s);
+          return Number.isNaN(n) ? s : n;
+        });
+      const updated = params.map((p) =>
+        p.key === key ? { ...p, discreteValues: parsed } : p,
+      );
+      updateNodeData(nodeId, { tunableParams: updated } as Partial<SurroNodeData>);
+    },
+    [discreteRawText, data.tunableParams, nodeId, updateNodeData],
+  );
+
+  // ── Toggle a string option on/off for tuning ─────────────────────────
+  const toggleStringOption = useCallback(
+    (key: string, option: string) => {
+      const params = data.tunableParams ?? [];
+      const updated = params.map((p) => {
+        if (p.key !== key) return p;
+        const allOptions = p.options ?? [];
+        const current = p.selectedOptions ?? [...allOptions]; // default: all selected
+        const next = current.includes(option)
+          ? current.filter((o) => o !== option)
+          : [...current, option];
+        // Don't allow deselecting everything — keep at least one
+        if (next.length === 0) return p;
+        return { ...p, selectedOptions: next };
+      });
       updateNodeData(nodeId, { tunableParams: updated } as Partial<SurroNodeData>);
     },
     [data.tunableParams, nodeId, updateNodeData],
@@ -759,7 +830,8 @@ function AgentBasedTunerUI({
           min: p.min,
           max: p.max,
           step: p.step,
-          options: p.options,
+          options: p.selectedOptions ?? p.options,
+          discreteValues: p.useDiscreteValues ? p.discreteValues : undefined,
         })),
         n_iterations: Number(data.hyperparams.n_iterations) || 50,
         exploration_rate: Number(data.hyperparams.exploration_rate) || 0.1,
@@ -807,6 +879,9 @@ function AgentBasedTunerUI({
     const predData = predictor.data as RegressorNodeData | ClassifierNodeData;
     const updatedHP = { ...predData.hyperparams, ...bestConfig };
     updateNodeData(predictorId, { hyperparams: updatedHP } as Partial<SurroNodeData>);
+
+    setAppliedFeedback(true);
+    setTimeout(() => setAppliedFeedback(false), 2000);
   }, [data.connectedPredictorId, data.bestConfig, nodes, updateNodeData]);
 
   const tunableParams = data.tunableParams ?? [];
@@ -840,64 +915,127 @@ function AgentBasedTunerUI({
           <div className="inspector__section-title">
             Select HPs to Tune ({selectedCount}/{tunableParams.length})
           </div>
-          <div style={{ maxHeight: 260, overflowY: 'auto', marginBottom: 8 }}>
+          <div className="hp-tune-list">
             {tunableParams.map((p) => (
-              <div key={p.key} style={{ marginBottom: 6, padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.82rem' }}>
+              <div
+                key={p.key}
+                className={`hp-tune-card${p.selected ? ' hp-tune-card--active' : ''}`}
+              >
+                {/* ── Header row: checkbox + name + current value ── */}
+                <label className="hp-tune-card__header">
                   <input
                     type="checkbox"
                     checked={p.selected}
                     onChange={() => toggleParamSelection(p.key)}
                   />
-                  <span style={{ flex: 1, fontWeight: p.selected ? 600 : 400 }}>
+                  <span className="hp-tune-card__name">
                     {p.key.replace(/_/g, ' ')}
                   </span>
-                  <span style={{ opacity: 0.5, fontSize: '0.72rem' }}>
-                    {p.type === 'number' ? String(p.currentValue) : p.type === 'boolean' ? (p.currentValue ? 'true' : 'false') : String(p.currentValue)}
+                  <span className="hp-tune-card__current">
+                    {p.type === 'boolean'
+                      ? (p.currentValue ? 'true' : 'false')
+                      : String(p.currentValue)}
                   </span>
                 </label>
 
-                {/* ── Range controls for selected numeric params ────── */}
+                {/* ── Expanded controls for selected numeric params ── */}
                 {p.selected && p.type === 'number' && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, marginTop: 4, marginLeft: 22 }}>
-                    <label style={{ fontSize: '0.7rem' }}>
-                      min
-                      <input
-                        type="number"
-                        value={p.min ?? 0}
-                        step={p.step ?? 0.01}
-                        style={{ width: '100%', fontSize: '0.72rem' }}
-                        onChange={(e) => updateParamRange(p.key, 'min', parseFloat(e.target.value) || 0)}
-                      />
-                    </label>
-                    <label style={{ fontSize: '0.7rem' }}>
-                      max
-                      <input
-                        type="number"
-                        value={p.max ?? 1}
-                        step={p.step ?? 0.01}
-                        style={{ width: '100%', fontSize: '0.72rem' }}
-                        onChange={(e) => updateParamRange(p.key, 'max', parseFloat(e.target.value) || 1)}
-                      />
-                    </label>
-                    <label style={{ fontSize: '0.7rem' }}>
-                      step
-                      <input
-                        type="number"
-                        value={p.step ?? 0.01}
-                        style={{ width: '100%', fontSize: '0.72rem' }}
-                        onChange={(e) => updateParamRange(p.key, 'step', parseFloat(e.target.value) || 0.01)}
-                      />
-                    </label>
+                  <div className="hp-tune-card__body">
+                    {/* Mode toggle: Range / Discrete */}
+                    <div className="hp-tune-card__mode-toggle">
+                      <button
+                        className={`hp-tune-card__mode-btn${!p.useDiscreteValues ? ' hp-tune-card__mode-btn--active' : ''}`}
+                        onClick={() => p.useDiscreteValues && toggleDiscreteMode(p.key)}
+                      >
+                        Range
+                      </button>
+                      <button
+                        className={`hp-tune-card__mode-btn${p.useDiscreteValues ? ' hp-tune-card__mode-btn--active' : ''}`}
+                        onClick={() => !p.useDiscreteValues && toggleDiscreteMode(p.key)}
+                      >
+                        Discrete
+                      </button>
+                    </div>
+
+                    {!p.useDiscreteValues ? (
+                      /* ── Range mode: min / max / step ── */
+                      <div className="hp-tune-card__range-grid">
+                        <div className="inspector__field">
+                          <span>min</span>
+                          <input
+                            type="number"
+                            value={p.min ?? 0}
+                            step={p.step ?? 0.01}
+                            onChange={(e) =>
+                              updateParamRange(p.key, 'min', parseFloat(e.target.value) || 0)
+                            }
+                          />
+                        </div>
+                        <div className="inspector__field">
+                          <span>max</span>
+                          <input
+                            type="number"
+                            value={p.max ?? 1}
+                            step={p.step ?? 0.01}
+                            onChange={(e) =>
+                              updateParamRange(p.key, 'max', parseFloat(e.target.value) || 1)
+                            }
+                          />
+                        </div>
+                        <div className="inspector__field">
+                          <span>step</span>
+                          <input
+                            type="number"
+                            value={p.step ?? 0.01}
+                            onChange={(e) =>
+                              updateParamRange(p.key, 'step', parseFloat(e.target.value) || 0.01)
+                            }
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      /* ── Discrete mode: semicolon-separated values ── */
+                      <div className="inspector__field">
+                        <span>values (separated by ;)</span>
+                        <input
+                          type="text"
+                          placeholder="e.g. 32; 64; 128; 256"
+                          value={
+                            discreteRawText[p.key] !== undefined
+                              ? discreteRawText[p.key]
+                              : (p.discreteValues ?? []).join('; ')
+                          }
+                          onChange={(e) => onDiscreteTextChange(p.key, e.target.value)}
+                          onBlur={() => commitDiscreteValues(p.key)}
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* ── Show options for selected string params ────── */}
+                {/* ── Expanded controls for selected string params ── */}
                 {p.selected && p.type === 'string' && p.options && (
-                  <p style={{ fontSize: '0.7rem', opacity: 0.5, marginLeft: 22, marginTop: 2 }}>
-                    Options: {p.options.join(', ')}
-                  </p>
+                  <div className="hp-tune-card__body">
+                    <div className="hp-tune-card__options">
+                      {p.options.map((opt) => {
+                        const sel = p.selectedOptions ?? p.options ?? [];
+                        const isActive = sel.includes(opt);
+                        return (
+                          <button
+                            key={opt}
+                            className={`hp-tune-card__option-chip${isActive ? ' hp-tune-card__option-chip--active' : ''}`}
+                            onClick={() => toggleStringOption(p.key, opt)}
+                            type="button"
+                          >
+                            {opt}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
+
+                {/* ── Boolean: no extra controls needed ── */}
               </div>
             ))}
           </div>
@@ -926,15 +1064,11 @@ function AgentBasedTunerUI({
         </>
       )}
 
-      {/* ── Results ──────────────────────────────────────────────────── */}
+      {/* ── Results summary (compact — full results in Output panel) ─── */}
       {data.tuningResults && data.tuningResults.length > 0 && (
         <>
-          <div className="inspector__section-title" style={{ marginTop: 8 }}>
-            Tuning Results ({data.tuningResults.length} iterations)
-          </div>
-
           {data.bestConfig && data.bestScore != null && (
-            <div style={{ background: 'rgba(45,212,191,0.12)', borderRadius: 6, padding: '6px 8px', marginBottom: 8 }}>
+            <div style={{ background: 'rgba(45,212,191,0.12)', borderRadius: 6, padding: '6px 8px', marginTop: 8, marginBottom: 4 }}>
               <div style={{ fontWeight: 600, fontSize: '0.82rem', marginBottom: 4 }}>
                 🏆 Best: {data.hyperparams.scoring_metric} = {data.bestScore.toFixed(6)}
               </div>
@@ -946,47 +1080,21 @@ function AgentBasedTunerUI({
               <button
                 className="btn"
                 onClick={applyBestConfig}
-                style={{ marginTop: 6, fontSize: '0.75rem', padding: '3px 10px' }}
+                style={{
+                  marginTop: 6,
+                  fontSize: '0.75rem',
+                  padding: '3px 10px',
+                  background: appliedFeedback ? '#22c55e' : undefined,
+                  transition: 'background 0.3s',
+                }}
               >
-                ✅ Apply Best to Predictor
+                {appliedFeedback ? '✅ Applied!' : '✅ Apply Best to Predictor'}
               </button>
             </div>
           )}
-
-          {/* ── Iteration history table ──────────────────────────────── */}
-          <div style={{ maxHeight: 240, overflowY: 'auto', fontSize: '0.72rem' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
-                  <th style={{ textAlign: 'left', padding: '3px 4px' }}>#</th>
-                  <th style={{ textAlign: 'left', padding: '3px 4px' }}>Score</th>
-                  <th style={{ textAlign: 'left', padding: '3px 4px' }}>Config</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.tuningResults.map((r) => {
-                  const isBest = data.bestScore != null && Math.abs(r.score - data.bestScore) < 1e-10;
-                  return (
-                    <tr
-                      key={r.iteration}
-                      style={{
-                        borderBottom: '1px solid rgba(255,255,255,0.06)',
-                        background: isBest ? 'rgba(45,212,191,0.08)' : 'transparent',
-                      }}
-                    >
-                      <td style={{ padding: '3px 4px' }}>{r.iteration}</td>
-                      <td style={{ padding: '3px 4px', fontFamily: 'monospace' }}>{r.score.toFixed(6)}</td>
-                      <td style={{ padding: '3px 4px', opacity: 0.7 }}>
-                        {Object.entries(r.config)
-                          .map(([k, v]) => `${k}=${typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(4)) : v}`)
-                          .join(', ')}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <p className="inspector__hint" style={{ fontSize: '0.68rem', opacity: 0.5, margin: '2px 0 0' }}>
+            Full results &amp; analytics available in the Output panel below.
+          </p>
         </>
       )}
     </>

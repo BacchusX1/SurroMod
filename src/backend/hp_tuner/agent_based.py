@@ -82,14 +82,49 @@ def _load_llm(config_path: str) -> Any:
     try:
         from llama_cpp import Llama  # type: ignore[import-untyped]
 
+        requested_gpu_layers = int(llm_cfg.get("n_gpu_layers", 0))
+
         llm = Llama(
             model_path=model_path,
             n_ctx=int(llm_cfg.get("n_ctx", 8192)),
             n_threads=int(llm_cfg.get("n_threads", 4)),
-            n_gpu_layers=int(llm_cfg.get("n_gpu_layers", 0)),
+            n_gpu_layers=requested_gpu_layers,
             main_gpu=int(llm_cfg.get("main_gpu", 0)),
             verbose=False,
         )
+
+        # ── GPU verification ─────────────────────────────────────────
+        gpu_active = False
+        try:
+            import llama_cpp
+            # llama_cpp exposes supports_gpu_offload since v0.2.x
+            if hasattr(llama_cpp, "llama_supports_gpu_offload"):
+                gpu_active = llama_cpp.llama_supports_gpu_offload()
+            elif hasattr(llama_cpp, "supports_gpu_offload"):
+                gpu_active = llama_cpp.supports_gpu_offload()
+            else:
+                # Heuristic: if n_gpu_layers != 0, check if CUDA build
+                gpu_active = requested_gpu_layers != 0
+        except Exception:  # noqa: BLE001
+            pass
+
+        if requested_gpu_layers != 0 and not gpu_active:
+            logger.warning(
+                "GPU offload requested (n_gpu_layers=%d) but llama-cpp-python "
+                "appears to be a CPU-only build. Reinstall with CUDA support:\n"
+                "  CMAKE_ARGS=\"-DGGML_CUDA=on\" pip install llama-cpp-python "
+                "--force-reinstall --no-cache-dir",
+                requested_gpu_layers,
+            )
+        elif requested_gpu_layers != 0:
+            logger.info(
+                "GPU offload active (n_gpu_layers=%d, main_gpu=%d).",
+                requested_gpu_layers,
+                int(llm_cfg.get("main_gpu", 0)),
+            )
+        else:
+            logger.info("Running LLM on CPU only (n_gpu_layers=0).")
+
         logger.info("LLM loaded from %s (ctx=%d)", model_path, llm_cfg.get("n_ctx", 8192))
         return llm
     except ImportError:
@@ -114,75 +149,149 @@ def _build_prompt(
     n_iterations: int,
     data_info: dict[str, Any] | None = None,
 ) -> str:
-    """Build the instruction prompt for the LLM."""
-    direction = "higher is better" if maximize else "lower is better"
-    phase = (
-        "EXPLORE diverse regions of the search space"
-        if iteration < n_iterations / 3
-        else "EXPLOIT promising regions near the best configurations found so far"
-    )
+    """Build a compact, information-dense prompt for the LLM.
 
-    # Search space description
+    Strategy:
+    - Keep the immutable parts (search space, dataset) short.
+    - Show a rolling window: top-K best + last-N iterations.
+    - Include delta/trend feedback so the LLM can see what's working.
+    - Produce an example JSON so the format is unambiguous.
+    """
+    direction = "maximize" if maximize else "minimize"
+    progress = iteration / n_iterations
+    if progress < 0.33:
+        phase = "EXPLORE: try diverse, spread-out values"
+    elif progress < 0.66:
+        phase = "REFINE: narrow in on promising regions"
+    else:
+        phase = "EXPLOIT: fine-tune near the best configs found"
+
+    # ── Search space (compact) ──────────────────────────────────────────
     space_lines: list[str] = []
     for p in selected_params:
         key = p["key"]
         ptype = p["type"]
         current = p["currentValue"]
-        if ptype == "number":
+        # Support discrete values (semicolon-separated list)
+        discrete = p.get("discreteValues")
+        if discrete and isinstance(discrete, list) and len(discrete) > 0:
+            space_lines.append(f"  {key}: one of {discrete}")
+        elif ptype == "number":
             lo, hi = p.get("min", 0), p.get("max", 1)
             step = p.get("step")
-            step_hint = f", step={step}" if step else ""
-            # Determine if integer
             is_int = isinstance(current, int) or (
                 isinstance(current, float)
                 and current == int(current)
                 and (step is None or step == int(step))
             )
-            type_label = "int" if is_int else "float"
-            space_lines.append(
-                f"  - {key} ({type_label}): range [{lo}, {hi}]{step_hint}, current={current}"
-            )
+            t = "int" if is_int else "float"
+            s = f", step {step}" if step else ""
+            space_lines.append(f"  {key} ({t}): [{lo} .. {hi}]{s}")
         elif ptype == "string":
-            options = p.get("options", [])
-            space_lines.append(
-                f"  - {key} (categorical): options={options}, current=\"{current}\""
-            )
+            opts = p.get("options", [])
+            space_lines.append(f"  {key}: one of {opts}")
         elif ptype == "boolean":
-            space_lines.append(
-                f"  - {key} (boolean): true or false, current={current}"
-            )
+            space_lines.append(f"  {key}: true | false")
     search_space = "\n".join(space_lines)
 
-    # History
-    if history:
-        best_entry = (
-            max(history, key=lambda h: h["score"])
-            if maximize
-            else min(history, key=lambda h: h["score"])
-        )
-        hist_lines = []
-        for h in history:
-            cfg_str = json.dumps(h["config"], separators=(", ", ": "))
-            marker = " ★ BEST" if h is best_entry else ""
-            hist_lines.append(
-                f"  Iter {h['iteration']}: {cfg_str} → {scoring_metric}={h['score']:.6f}{marker}"
-            )
-        history_text = "\n".join(hist_lines)
-        best_text = (
-            f"Current best: {scoring_metric}={best_entry['score']:.6f} "
-            f"with {json.dumps(best_entry['config'], separators=(', ', ': '))}"
-        )
-    else:
-        history_text = "  (no evaluations yet)"
-        best_text = "(no evaluations yet)"
+    # ── Dataset info (one-liner) ────────────────────────────────────────
+    ds_line = ""
+    if data_info:
+        parts: list[str] = []
+        ns = data_info.get("n_samples")
+        nf = data_info.get("n_features", 0)
+        nl = data_info.get("n_labels", 0)
+        nt = data_info.get("n_train_samples")
+        nh = data_info.get("n_holdout_samples")
+        fn = data_info.get("file_name", "")
+        if fn:
+            parts.append(fn)
+        if ns is not None:
+            parts.append(f"{ns} samples")
+        parts.append(f"{nf} features")
+        parts.append(f"{nl} labels")
+        if nt is not None and nh is not None:
+            parts.append(f"train/holdout {nt}/{nh}")
+        ds_line = f"Dataset: {', '.join(parts)}\n"
 
-    # Example JSON for the expected output
+    # ── History: top-K best + last-N (with deltas) ──────────────────────
+    TOP_K = 3
+    LAST_N = 5
+
+    history_text = ""
+    best_text = ""
+    if history:
+        sorted_hist = sorted(
+            history,
+            key=lambda h: h["score"],
+            reverse=maximize,
+        )
+        best_entry = sorted_hist[0]
+        best_text = (
+            f"Best so far: {scoring_metric}={best_entry['score']:.6f} "
+            f"config={json.dumps(best_entry['config'], separators=(',', ':'))}\n"
+        )
+
+        # Top K
+        top_k = sorted_hist[:TOP_K]
+        top_lines = []
+        for h in top_k:
+            cfg = json.dumps(h["config"], separators=(",", ":"))
+            top_lines.append(f"  #{h['iteration']} {scoring_metric}={h['score']:.6f} {cfg}")
+        history_text += "Top configs:\n" + "\n".join(top_lines) + "\n"
+
+        # Last N with deltas
+        recent = history[-LAST_N:]
+        rec_lines = []
+        for i, h in enumerate(recent):
+            cfg = json.dumps(h["config"], separators=(",", ":"))
+            delta = ""
+            if i > 0:
+                prev_score = recent[i - 1]["score"]
+                diff = h["score"] - prev_score
+                arrow = "↑" if (diff > 0) == maximize else "↓" if diff != 0 else "→"
+                delta = f" ({arrow}{abs(diff):.6f})"
+            # Mark if this iteration had a penalty (pipeline failure)
+            penalty = ""
+            if (maximize and h["score"] <= -1e9) or (not maximize and h["score"] >= 1e9):
+                penalty = " [FAILED]"
+            rec_lines.append(
+                f"  #{h['iteration']} {scoring_metric}={h['score']:.6f}{delta}{penalty} {cfg}"
+            )
+        history_text += "Recent:\n" + "\n".join(rec_lines) + "\n"
+
+        # Trend summary
+        if len(history) >= 3:
+            last3 = [h["score"] for h in history[-3:]]
+            if maximize:
+                improving = last3[-1] > last3[0]
+            else:
+                improving = last3[-1] < last3[0]
+            spread = max(last3) - min(last3)
+            if spread < 1e-6:
+                history_text += "Trend: stagnant — try a different region.\n"
+            elif improving:
+                history_text += "Trend: improving — keep refining this direction.\n"
+            else:
+                history_text += "Trend: worsening — change strategy.\n"
+    else:
+        history_text = "No evaluations yet.\n"
+
+    # ── Example JSON ────────────────────────────────────────────────────
     example_config: dict[str, Any] = {}
     for p in selected_params:
         key = p["key"]
-        if p["type"] == "number":
+        discrete = p.get("discreteValues")
+        if discrete and isinstance(discrete, list) and len(discrete) > 0:
+            example_config[key] = discrete[0]
+        elif p["type"] == "number":
             mid = (p.get("min", 0) + p.get("max", 1)) / 2
-            example_config[key] = round(mid, 4)
+            cv = p["currentValue"]
+            step = p.get("step")
+            if isinstance(cv, int) or (step is not None and step == int(step)):
+                example_config[key] = int(round(mid))
+            else:
+                example_config[key] = round(mid, 4)
         elif p["type"] == "string":
             opts = p.get("options", [p["currentValue"]])
             example_config[key] = opts[0] if opts else p["currentValue"]
@@ -190,73 +299,15 @@ def _build_prompt(
             example_config[key] = True
     example_json = json.dumps(example_config, separators=(", ", ": "))
 
-    # ── Dataset information section ─────────────────────────────────────
-    dataset_section = ""
-    if data_info:
-        ds_lines: list[str] = []
-
-        n_features = data_info.get("n_features", 0)
-        n_labels = data_info.get("n_labels", 0)
-        n_samples = data_info.get("n_samples")
-        n_train = data_info.get("n_train_samples")
-        n_holdout = data_info.get("n_holdout_samples")
-        input_kind = data_info.get("input_kind", "unknown")
-        file_name = data_info.get("file_name", "")
-        holdout_ratio = data_info.get("holdout_ratio")
-        col_dtypes = data_info.get("column_dtypes", {})
-        feature_names = data_info.get("feature_names", [])
-        label_names = data_info.get("label_names", [])
-
-        if file_name:
-            ds_lines.append(f"  - Data file: {file_name}")
-        ds_lines.append(f"  - Input type: {input_kind}")
-        if n_samples is not None:
-            ds_lines.append(f"  - Total samples: {n_samples}")
-        if n_train is not None and n_holdout is not None:
-            ds_lines.append(
-                f"  - Train / holdout split: {n_train} / {n_holdout}"
-                f" (holdout_ratio={holdout_ratio})"
-            )
-        ds_lines.append(f"  - Number of features (inputs): {n_features}")
-        ds_lines.append(f"  - Number of labels (outputs): {n_labels}")
-
-        if feature_names:
-            ds_lines.append(f"  - Feature columns: {', '.join(feature_names)}")
-        if label_names:
-            ds_lines.append(f"  - Label columns: {', '.join(label_names)}")
-
-        if col_dtypes:
-            dtype_summary: dict[str, int] = {}
-            for _col, dt in col_dtypes.items():
-                dtype_summary[dt] = dtype_summary.get(dt, 0) + 1
-            dtype_parts = [f"{cnt}× {dt}" for dt, cnt in dtype_summary.items()]
-            ds_lines.append(f"  - Column types: {', '.join(dtype_parts)}")
-
-        dataset_section = "\n## Dataset Information\n" + "\n".join(ds_lines) + "\n\n"
-
     prompt = (
-        "You are an expert machine learning hyperparameter tuning agent. "
-        "Your goal is to find the best hyperparameters for a model by "
-        "suggesting configurations to evaluate.\n\n"
-        f"## Search Space\n{search_space}\n\n"
-        f"{dataset_section}"
-        f"## Evaluation History (metric: {scoring_metric}, {direction})\n"
-        f"{history_text}\n\n"
-        f"{best_text}\n\n"
-        f"## Strategy\n"
-        f"This is iteration {iteration}/{n_iterations}. You should {phase}.\n"
-        "Consider the dataset characteristics (size, dimensionality, data types) "
-        "when choosing hyperparameters — e.g. smaller datasets benefit from "
-        "stronger regularisation, high-dimensional data may need lower complexity, "
-        "and the train/holdout split affects over-fitting risk.\n\n"
-        "## Instructions\n"
-        "Suggest the NEXT hyperparameter configuration to evaluate.\n"
-        "- For numeric parameters, stay within the specified ranges.\n"
-        "- For categorical parameters, choose one of the listed options.\n"
-        "- For boolean parameters, use true or false.\n\n"
-        "Respond with ONLY a valid JSON object. "
-        "No explanation, no markdown fences, no extra text.\n"
-        f"Example format: {example_json}"
+        f"You are an ML hyperparameter tuning agent. {direction} {scoring_metric}.\n"
+        f"{ds_line}"
+        f"\nSearch space:\n{search_space}\n"
+        f"\n{history_text}"
+        f"{best_text}"
+        f"\nIteration {iteration}/{n_iterations}. Strategy: {phase}\n"
+        f"\nRespond with ONLY a JSON object, no explanation.\n"
+        f"Format: {example_json}"
     )
     return prompt
 
@@ -307,6 +358,43 @@ def _parse_llm_response(
         except json.JSONDecodeError:
             pass
 
+    # ── Fix common LLM mistakes: trailing commas, single quotes ──────────
+    cleaned = text
+    # Replace single quotes with double quotes
+    cleaned = cleaned.replace("'", '"')
+    # Remove trailing commas before closing braces
+    cleaned = re.sub(r",\s*}", "}", cleaned)
+    # Remove trailing commas before closing brackets
+    cleaned = re.sub(r",\s*]", "]", cleaned)
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if match:
+        try:
+            obj = json.loads(match.group())
+            if isinstance(obj, dict):
+                return _validate_and_cast(obj, selected_params)
+        except json.JSONDecodeError:
+            pass
+
+    # ── Last resort: extract key-value pairs with regex ──────────────────
+    param_keys = {p["key"] for p in selected_params}
+    kv_config: dict[str, Any] = {}
+    for key in param_keys:
+        # Match patterns like: "key": value, key = value, key: value
+        pattern = rf'["\']?{re.escape(key)}["\']?\s*[:=]\s*(["\']?)(.+?)\1(?:\s*[,}}\n]|$)'
+        kv_match = re.search(pattern, text, re.IGNORECASE)
+        if kv_match:
+            raw_val = kv_match.group(2).strip()
+            # Try to parse as number/bool
+            if raw_val.lower() in ("true", "false"):
+                kv_config[key] = raw_val.lower() == "true"
+            else:
+                try:
+                    kv_config[key] = json.loads(raw_val)
+                except (json.JSONDecodeError, ValueError):
+                    kv_config[key] = raw_val
+    if kv_config:
+        return _validate_and_cast(kv_config, selected_params)
+
     return None
 
 
@@ -314,18 +402,36 @@ def _validate_and_cast(
     config: dict[str, Any],
     selected_params: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Clamp numeric values to their ranges and cast types."""
+    """Clamp numeric values to their ranges, cast types, and enforce discrete sets."""
     param_map = {p["key"]: p for p in selected_params}
     validated: dict[str, Any] = {}
 
     for key, spec in param_map.items():
         if key not in config:
-            # Use current value as fallback
             validated[key] = spec["currentValue"]
             continue
 
         val = config[key]
         ptype = spec["type"]
+
+        # ── Discrete values override (semicolon-separated from frontend) ──
+        discrete = spec.get("discreteValues")
+        if discrete and isinstance(discrete, list) and len(discrete) > 0:
+            # Snap to the closest allowed discrete value
+            try:
+                fval = float(val)
+                closest = min(discrete, key=lambda d: abs(float(d) - fval))
+                # Preserve int type if current value is int
+                if isinstance(spec["currentValue"], int):
+                    validated[key] = int(float(closest))
+                else:
+                    validated[key] = type(closest)(closest)
+            except (TypeError, ValueError):
+                # String match fallback
+                sval = str(val).strip()
+                matched = next((d for d in discrete if str(d).strip() == sval), None)
+                validated[key] = matched if matched is not None else discrete[0]
+            continue
 
         if ptype == "number":
             try:
@@ -336,7 +442,6 @@ def _validate_and_cast(
             hi = float(spec.get("max", math.inf))
             val = max(lo, min(hi, val))
             step = spec.get("step")
-            # Round to step if integer-like
             cv = spec["currentValue"]
             if isinstance(cv, int) or (
                 step is not None and step == int(step)
@@ -350,7 +455,6 @@ def _validate_and_cast(
         elif ptype == "string":
             options = spec.get("options", [])
             if options and str(val) not in options:
-                # Pick closest match or fallback
                 val_lower = str(val).lower()
                 for opt in options:
                     if opt.lower() == val_lower:
@@ -372,35 +476,6 @@ def _validate_and_cast(
 
     return validated
 
-
-# ── Random config fallback ───────────────────────────────────────────────────
-
-def _random_config(selected_params: list[dict[str, Any]]) -> dict[str, Any]:
-    """Generate a random configuration within the search space."""
-    config: dict[str, Any] = {}
-    for p in selected_params:
-        key = p["key"]
-        ptype = p["type"]
-        if ptype == "number":
-            lo = float(p.get("min", 0))
-            hi = float(p.get("max", 1))
-            step = p.get("step")
-            cv = p["currentValue"]
-            if isinstance(cv, int) or (step is not None and step == int(step)):
-                config[key] = random.randint(int(lo), int(hi))
-            else:
-                val = random.uniform(lo, hi)
-                if step:
-                    val = round(val / step) * step
-                config[key] = round(val, 8)
-        elif ptype == "string":
-            options = p.get("options", [p["currentValue"]])
-            config[key] = random.choice(options) if options else p["currentValue"]
-        elif ptype == "boolean":
-            config[key] = random.choice([True, False])
-    return config
-
-
 # ── Metric extraction ────────────────────────────────────────────────────────
 
 def _extract_metric(
@@ -412,10 +487,25 @@ def _extract_metric(
 
     Preference order: validator nodes > rbl_aggregator > regressor.
     """
+    full = _extract_metrics_full(pipeline_result, scoring_metric)
+    return full.get("train")
+
+
+def _extract_metrics_full(
+    pipeline_result: dict[str, Any],
+    scoring_metric: str,
+) -> dict[str, Any]:
+    """
+    Extract both train and holdout metrics + model parameter count.
+
+    Returns ``{"train": float|None, "holdout": float|None, "n_params": int|None}``.
+    """
     node_results = pipeline_result.get("node_results", {})
 
     best_source: str | None = None
-    best_value: float | None = None
+    best_train: float | None = None
+    best_holdout: float | None = None
+    best_n_params: int | None = None
 
     # Priority: higher number = preferred
     priority_map: dict[str, int] = {
@@ -428,10 +518,15 @@ def _extract_metric(
         if not isinstance(result, dict):
             continue
 
-        # Check for metrics at various nesting levels
+        # ── Collect n_params from regressor / predictor nodes ─────────
+        n_params = result.get("n_params")
+        if n_params is not None:
+            best_n_params = int(n_params)
+
+        # ── Check for metrics at various nesting levels ──────────────
         metrics: dict[str, float] | None = None
 
-        # Direct metrics dict
+        # Direct metrics dict (train)
         if "metrics" in result and isinstance(result["metrics"], dict):
             metrics = result["metrics"]
 
@@ -450,17 +545,35 @@ def _extract_metric(
             current_priority = priority_map.get(source_type, 0)
             best_priority = priority_map.get(best_source, -1) if best_source else -1
 
-            if best_value is None or current_priority > best_priority:
-                best_value = val
+            if best_train is None or current_priority > best_priority:
+                best_train = val
                 best_source = source_type
+                # Extract holdout from same node
+                holdout_block = result.get("holdout")
+                if isinstance(holdout_block, dict):
+                    h_metrics = holdout_block.get("metrics", {})
+                    best_holdout = float(h_metrics[scoring_metric]) if scoring_metric in h_metrics else None
+                else:
+                    best_holdout = None
             elif current_priority == best_priority:
-                # Same priority — keep latest
-                best_value = val
+                best_train = val
+                holdout_block = result.get("holdout")
+                if isinstance(holdout_block, dict):
+                    h_metrics = holdout_block.get("metrics", {})
+                    best_holdout = float(h_metrics[scoring_metric]) if scoring_metric in h_metrics else None
+                else:
+                    best_holdout = None
 
-    return best_value
+    return {"train": best_train, "holdout": best_holdout, "n_params": best_n_params}
 
 
 # ── Main tuner class ─────────────────────────────────────────────────────────
+
+
+def load_llm_from_config(config_path: str) -> Any:
+    """Public helper to load the LLM from config."""
+    return _load_llm(config_path)
+
 
 class AgentBasedTuner:
     """
@@ -489,20 +602,39 @@ class AgentBasedTuner:
         temperature: float = 0.7,
         max_tokens: int = 512,
     ) -> str:
-        """Query the LLM and return the raw text response."""
+        """Query the LLM via the **chat completion** API.
+
+        Instruct / chat-tuned models (Mistral-Instruct, Llama-Chat, etc.)
+        expect a structured message list. ``llama-cpp-python``'s
+        ``create_chat_completion`` applies the correct chat template
+        automatically, whereas the raw completion API often produces
+        empty or nonsensical output for these models.
+        """
         if self._llm is None:
             return ""
 
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a hyperparameter tuning assistant. "
+                    "Always respond with ONLY a single JSON object. "
+                    "No explanation, no markdown fences, no extra text."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+
         try:
-            result = self._llm(
-                prompt,
+            result = self._llm.create_chat_completion(
+                messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 top_p=0.95,
                 repeat_penalty=1.1,
-                stop=["}\n\n", "\n\n\n"],
             )
-            text = result["choices"][0]["text"]
+            text = result["choices"][0]["message"]["content"] or ""
+            logger.debug("LLM raw response: %.500s", text)
             # The stop token might have cut off the closing brace
             if "{" in text and "}" not in text:
                 text = text.rstrip() + "}"
@@ -584,7 +716,7 @@ class AgentBasedTuner:
         for iteration in range(1, n_iterations + 1):
             # ── 1. Get HP suggestion ─────────────────────────────────────
             config: dict[str, Any] | None = None
-            llm_retries = 2
+            llm_retries = 3
 
             prompt = _build_prompt(
                 selected_params,
@@ -605,20 +737,33 @@ class AgentBasedTuner:
                 if config is not None:
                     break
                 logger.warning(
-                    "HP Tuner iter %d: LLM parse failed (attempt %d/%d): %s - prompt: %s",
+                    "HP Tuner iter %d: LLM parse failed (attempt %d/%d). "
+                    "Raw response: %.200s",
                     iteration,
                     attempt + 1,
                     llm_retries + 1,
-                    prompt,
+                    raw,
                 )
 
             if config is None:
-                msg = (
-                    f"HP Tuner iter {iteration}: LLM failed to produce a valid "
-                    f"config after {llm_retries + 1} attempts. Stopping tuning."
+                logger.error(
+                    "HP Tuner iter %d: LLM failed to produce a valid "
+                    "config after %d attempts. Skipping this iteration.",
+                    iteration,
+                    llm_retries + 1,
                 )
-                logger.error(msg)
-                raise RuntimeError(msg)
+                penalty = -1e10 if maximize else 1e10
+                history.append(
+                    {
+                        "iteration": iteration,
+                        "config": {p["key"]: p["currentValue"] for p in selected_params},
+                        "score": round(penalty, 8),
+                        "train_score": round(penalty, 8),
+                        "holdout_score": None,
+                        "n_params": None,
+                    }
+                )
+                continue
 
             # ── 2. Patch predictor HPs in the pipeline ───────────────────
             modified_nodes = copy.deepcopy(nodes)
@@ -633,9 +778,16 @@ class AgentBasedTuner:
 
             # ── 3. Run the pipeline ──────────────────────────────────────
             score: float | None = None
+            train_score: float | None = None
+            holdout_score: float | None = None
+            n_params: int | None = None
             try:
                 result = run_pipeline(modified_nodes, edges, seed=seed)
-                score = _extract_metric(result, scoring_metric)
+                metrics_full = _extract_metrics_full(result, scoring_metric)
+                train_score = metrics_full.get("train")
+                holdout_score = metrics_full.get("holdout")
+                n_params = metrics_full.get("n_params")
+                score = train_score
             except Exception as exc:
                 logger.error(
                     "HP Tuner iter %d: pipeline run failed: %s",
@@ -646,6 +798,7 @@ class AgentBasedTuner:
             if score is None:
                 # Assign a very bad score so this config is not selected
                 score = -1e10 if maximize else 1e10
+                train_score = score
                 logger.warning(
                     "HP Tuner iter %d: could not extract metric '%s' "
                     "— assigned penalty score.",
@@ -653,10 +806,13 @@ class AgentBasedTuner:
                     scoring_metric,
                 )
 
-            entry = {
+            entry: dict[str, Any] = {
                 "iteration": iteration,
                 "config": config,
                 "score": round(score, 8),
+                "train_score": round(train_score, 8) if train_score is not None else None,
+                "holdout_score": round(holdout_score, 8) if holdout_score is not None else None,
+                "n_params": n_params,
             }
             history.append(entry)
 
@@ -670,6 +826,15 @@ class AgentBasedTuner:
             )
 
         # ── Find best ────────────────────────────────────────────────────
+        if not history:
+            logger.error("HP Tuner: no iterations completed. Returning empty result.")
+            return {
+                "history": [],
+                "best_config": {p["key"]: p["currentValue"] for p in selected_params},
+                "best_score": 0.0,
+                "error": "All iterations failed — no valid configs were produced.",
+            }
+
         if maximize:
             best = max(history, key=lambda h: h["score"])
         else:

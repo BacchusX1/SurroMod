@@ -14,6 +14,13 @@ Endpoints:
 
 from __future__ import annotations
 
+# ── CUDA workaround ──────────────────────────────────────────────────────
+# Force eager PTX compilation so CUDA JIT never runs in a worker thread.
+# The NVIDIA PTX JIT compiler (libnvidia-ptxjitcompiler.so) in driver
+# 535.x segfaults when invoked from non-main threads on WSL2.
+import os as _os
+_os.environ.setdefault("CUDA_MODULE_LOADING", "EAGER")
+
 import asyncio
 import logging
 import pickle
@@ -109,9 +116,51 @@ logging.getLogger().addHandler(log_broadcaster)
 
 logger = logging.getLogger(__name__)
 
-# ── App ───────────────────────────────────────────────────────────────────
+# ── LLM singleton ─────────────────────────────────────────────────────────
+# Pre-loaded on the main thread during startup so that CUDA PTX
+# compilation happens before any worker-thread request.
+_llm_singleton: Any = None
 
-app = FastAPI(title="SurroMod Backend", version="0.1.0")
+
+def _get_llm() -> Any:
+    """Return the pre-loaded LLM instance (may be None if unavailable)."""
+    return _llm_singleton
+
+
+# ── App (with lifespan) ───────────────────────────────────────────────────
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):  # noqa: ARG001
+    """Pre-load heavy resources on the MAIN thread before serving."""
+    global _llm_singleton  # noqa: PLW0603
+    try:
+        from src.backend.hp_tuner.agent_based import load_llm_from_config
+
+        config_path = str(Path(__file__).parent / "backend_config.yaml")
+        logger.info("Pre-loading LLM on main thread …")
+        _llm_singleton = load_llm_from_config(config_path)
+        if _llm_singleton is not None:
+            # Warm up: run a tiny inference so CUDA kernels are compiled now
+            try:
+                _llm_singleton.create_chat_completion(
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=1,
+                )
+                logger.info("LLM warm-up complete (CUDA kernels compiled).")
+            except Exception as exc:
+                logger.warning("LLM warm-up inference failed: %s", exc)
+        else:
+            logger.warning("LLM not available — agent-based tuning disabled.")
+    except Exception as exc:
+        logger.warning("LLM pre-load failed: %s — agent-based tuning disabled.", exc)
+    yield
+    _llm_singleton = None
+
+
+app = FastAPI(title="SurroMod Backend", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -21,6 +21,7 @@ export default defineConfig({
       '/api/': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        timeout: 1800000,  // 30 min — HP tuning is long-running
       },
     },
   },
