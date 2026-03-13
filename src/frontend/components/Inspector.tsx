@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, lazy, Suspense } from 'react';
 import useStore from '../store';
 import type {
   SurroNodeData,
@@ -21,6 +21,8 @@ import type {
 import { categoryColor, advancedKeys } from '../utils';
 import { uploadFile, fetchStructure, runAgentHPTuning } from '../api';
 import type { DataStructure, HPTuningDataInfo } from '../api';
+
+const HPTunerAnalytics = lazy(() => import('./HPTunerAnalytics'));
 
 // ─── Hyperparameter Editor ──────────────────────────────────────────────────
 
@@ -1093,7 +1095,7 @@ function AgentBasedTunerUI({
             </div>
           )}
           <p className="inspector__hint" style={{ fontSize: '0.68rem', opacity: 0.5, margin: '2px 0 0' }}>
-            Full results &amp; analytics available in the Output panel below.
+            Switch to the 📊 Analytics tab above for full results &amp; charts.
           </p>
         </>
       )}
@@ -1108,6 +1110,7 @@ export default function Inspector() {
   const [csvLoading, setCsvLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [dropActive, setDropActive] = useState(false);
+  const [hpInspectorTab, setHpInspectorTab] = useState<'config' | 'analytics'>('config');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── All hooks MUST be above any early return ──────────────────────────────
@@ -1492,35 +1495,127 @@ export default function Inspector() {
         )}
 
         {/* ── HP Tuner ─────────────────────────────────────────────────── */}
-        {data.category === 'hp_tuner' && (
-          <>
-            <label className="inspector__field">
-              <span>Method</span>
-              <input
-                type="text"
-                value={(data as HPTunerNodeData).method}
-                disabled
-              />
-            </label>
-            <div className="inspector__section-title">Parameters</div>
-            <HyperParamsEditor
-              hyperparams={(data as HPTunerNodeData).hyperparams}
-              onChange={handleHyperparamChange}
-            />
+        {data.category === 'hp_tuner' && (() => {
+          const hpData = data as HPTunerNodeData;
+          const hasResults = hpData.tuningResults && hpData.tuningResults.length > 0;
+          return (
+            <>
+              {/* Tab bar: Config / Analytics */}
+              {hasResults && (
+                <div className="inspector__tabs">
+                  <button
+                    className={`inspector__tab-btn${hpInspectorTab === 'config' ? ' inspector__tab-btn--active' : ''}`}
+                    onClick={() => setHpInspectorTab('config')}
+                  >
+                    ⚙️ Config
+                  </button>
+                  <button
+                    className={`inspector__tab-btn${hpInspectorTab === 'analytics' ? ' inspector__tab-btn--active' : ''}`}
+                    onClick={() => setHpInspectorTab('analytics')}
+                  >
+                    📊 Analytics
+                  </button>
+                </div>
+              )}
 
-            {/* ── AgentBased-specific UI ─────────────────────────────────── */}
-            {(data as HPTunerNodeData).method === 'AgentBased' && (
-              <AgentBasedTunerUI
-                nodeId={selectedNodeId}
-                data={data as HPTunerNodeData}
-                nodes={nodes}
-                edges={useStore.getState().edges}
-                updateNodeData={updateNodeData}
-                globalSeed={useStore.getState().globalSeed}
-              />
-            )}
-          </>
-        )}
+              {/* Config tab (default) */}
+              {(hpInspectorTab === 'config' || !hasResults) && (
+                <>
+                  <label className="inspector__field">
+                    <span>Method</span>
+                    <input
+                      type="text"
+                      value={hpData.method}
+                      disabled
+                    />
+                  </label>
+                  <div className="inspector__section-title">Parameters</div>
+                  <HyperParamsEditor
+                    hyperparams={hpData.hyperparams}
+                    onChange={handleHyperparamChange}
+                  />
+
+                  {/* ── AgentBased-specific UI ─────────────────────────────── */}
+                  {hpData.method === 'AgentBased' && (
+                    <AgentBasedTunerUI
+                      nodeId={selectedNodeId}
+                      data={hpData}
+                      nodes={nodes}
+                      edges={useStore.getState().edges}
+                      updateNodeData={updateNodeData}
+                      globalSeed={useStore.getState().globalSeed}
+                    />
+                  )}
+                </>
+              )}
+
+              {/* Analytics tab */}
+              {hpInspectorTab === 'analytics' && hasResults && (
+                <div className="inspector__analytics-wrap">
+                  {/* Results table */}
+                  <div className="inspector__section-title">
+                    Results ({hpData.tuningResults!.length} iterations)
+                  </div>
+                  <div className="inspector__table-wrap">
+                    <table className="hp-results-panel__table">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Score</th>
+                          {hpData.tuningResults![0]?.holdout_score != null && <th>Holdout</th>}
+                          {hpData.tuningResults![0]?.n_params != null && <th>Params</th>}
+                          <th>Config</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {hpData.tuningResults!.map((r) => {
+                          const isBest =
+                            hpData.bestScore != null && Math.abs(r.score - hpData.bestScore) < 1e-10;
+                          return (
+                            <tr key={r.iteration} className={isBest ? 'hp-results-panel__row--best' : ''}>
+                              <td>{r.iteration}</td>
+                              <td className="mono">{r.score.toFixed(6)}</td>
+                              {hpData.tuningResults![0]?.holdout_score != null && (
+                                <td className="mono">
+                                  {r.holdout_score != null ? r.holdout_score.toFixed(6) : '—'}
+                                </td>
+                              )}
+                              {hpData.tuningResults![0]?.n_params != null && (
+                                <td className="mono">
+                                  {r.n_params != null ? r.n_params.toLocaleString() : '—'}
+                                </td>
+                              )}
+                              <td className="dim">
+                                {Object.entries(r.config)
+                                  .map(
+                                    ([k, v]) =>
+                                      `${k}=${typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(4)) : v}`,
+                                  )
+                                  .join(', ')}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Charts */}
+                  <div className="inspector__section-title" style={{ marginTop: 12 }}>
+                    Charts
+                  </div>
+                  <Suspense fallback={<p style={{ padding: 12, opacity: 0.6, fontSize: '0.78rem' }}>Loading analytics…</p>}>
+                    <HPTunerAnalytics
+                      history={hpData.tuningResults!}
+                      tunableParams={hpData.tunableParams ?? []}
+                      scoringMetric={String(hpData.hyperparams.scoring_metric || 'r2')}
+                    />
+                  </Suspense>
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {/* ── RBL ──────────────────────────────────────────────────────── */}
         {data.category === 'rbl' && (

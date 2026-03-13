@@ -1245,6 +1245,71 @@ body,
   font-weight: 600;
 }
 
+/* ─── HP Tuner Node – Status Badges ──────────────────────────────────────── */
+
+.hpnode-status {
+  margin-left: auto;
+  font-size: 0.65rem;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.hpnode-status--running {
+  background: rgba(234, 179, 8, 0.2);
+  color: #fbbf24;
+}
+
+.hpnode-status--done {
+  background: rgba(45, 212, 191, 0.2);
+  color: #2dd4bf;
+}
+
+.hpnode-status--error {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+/* ─── Inspector – HP Tuner Tabs ──────────────────────────────────────────── */
+
+.inspector__tabs {
+  display: flex;
+  gap: 0;
+  margin: 8px 0 4px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.inspector__tab-btn {
+  padding: 6px 14px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.inspector__tab-btn:hover {
+  color: var(--text);
+}
+
+.inspector__tab-btn--active {
+  color: #60a5fa;
+  border-bottom-color: #60a5fa;
+}
+
+.inspector__table-wrap {
+  max-height: 300px;
+  overflow: auto;
+  margin-bottom: 8px;
+}
+
+.inspector__analytics-wrap {
+  overflow: auto;
+}
+
 /* ─── HP Tuner Analytics ─────────────────────────────────────────────────── */
 
 .hp-analytics {

@@ -29,14 +29,45 @@ import copy
 import json
 import logging
 import math
+import os
 import random
 import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+def _cuda_probe_ok() -> bool:
+    """
+    Spawn a tiny subprocess that triggers CUDA initialisation.
+
+    Returns ``True`` if CUDA is usable, ``False`` if the probe segfaults
+    or otherwise fails (e.g. broken driver under WSL 2).
+    """
+    script = (
+        "import ctypes, sys\n"
+        "try:\n"
+        "    rt = ctypes.CDLL('libcudart.so')\n"
+        "    n = ctypes.c_int(0)\n"
+        "    rc = rt.cudaGetDeviceCount(ctypes.byref(n))\n"
+        "    sys.exit(0 if rc == 0 and n.value > 0 else 1)\n"
+        "except Exception:\n"
+        "    sys.exit(1)\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            timeout=15,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
 
 # ── Metric direction ─────────────────────────────────────────────────────────
 
@@ -84,11 +115,28 @@ def _load_llm(config_path: str) -> Any:
 
         requested_gpu_layers = int(llm_cfg.get("n_gpu_layers", 0))
 
+        # ── CUDA probe: detect broken GPU drivers before they segfault ──
+        use_gpu_layers = requested_gpu_layers
+        if requested_gpu_layers != 0:
+            if _cuda_probe_ok():
+                logger.info("CUDA probe succeeded — GPU offload enabled.")
+            else:
+                logger.warning(
+                    "⚠ CUDA initialisation failed (GPU driver crash / not "
+                    "available). Falling back to CPU-only mode "
+                    "(n_gpu_layers forced to 0). LLM inference will be "
+                    "slower. To fix: update your GPU driver or, on WSL 2, "
+                    "ensure the Windows NVIDIA driver matches the WSL CUDA "
+                    "toolkit version."
+                )
+                use_gpu_layers = 0
+                os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
         llm = Llama(
             model_path=model_path,
             n_ctx=int(llm_cfg.get("n_ctx", 8192)),
             n_threads=int(llm_cfg.get("n_threads", 4)),
-            n_gpu_layers=requested_gpu_layers,
+            n_gpu_layers=use_gpu_layers,
             main_gpu=int(llm_cfg.get("main_gpu", 0)),
             verbose=False,
         )
@@ -104,22 +152,22 @@ def _load_llm(config_path: str) -> Any:
                 gpu_active = llama_cpp.supports_gpu_offload()
             else:
                 # Heuristic: if n_gpu_layers != 0, check if CUDA build
-                gpu_active = requested_gpu_layers != 0
+                gpu_active = use_gpu_layers != 0
         except Exception:  # noqa: BLE001
             pass
 
-        if requested_gpu_layers != 0 and not gpu_active:
+        if use_gpu_layers != 0 and not gpu_active:
             logger.warning(
                 "GPU offload requested (n_gpu_layers=%d) but llama-cpp-python "
                 "appears to be a CPU-only build. Reinstall with CUDA support:\n"
                 "  CMAKE_ARGS=\"-DGGML_CUDA=on\" pip install llama-cpp-python "
                 "--force-reinstall --no-cache-dir",
-                requested_gpu_layers,
+                use_gpu_layers,
             )
-        elif requested_gpu_layers != 0:
+        elif use_gpu_layers != 0:
             logger.info(
                 "GPU offload active (n_gpu_layers=%d, main_gpu=%d).",
-                requested_gpu_layers,
+                use_gpu_layers,
                 int(llm_cfg.get("main_gpu", 0)),
             )
         else:
@@ -568,12 +616,6 @@ def _extract_metrics_full(
 
 
 # ── Main tuner class ─────────────────────────────────────────────────────────
-
-
-def load_llm_from_config(config_path: str) -> Any:
-    """Public helper to load the LLM from config."""
-    return _load_llm(config_path)
-
 
 class AgentBasedTuner:
     """
