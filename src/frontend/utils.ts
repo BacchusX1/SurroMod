@@ -163,6 +163,7 @@ export const hpTunerDefaults: Record<HPTunerMethod, HyperParams> = {
     n_iterations: 50,
     exploration_rate: 0.1,
     scoring_metric: 'r2',
+    metric_source: 'train',
   },
   OptimiserBased: {
     n_trials: 100,

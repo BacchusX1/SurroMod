@@ -26,6 +26,7 @@ Flow
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import json
 import logging
 import math
@@ -42,20 +43,41 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+def _dump_prompt(prompt_dump_dir: str | None, iteration: int, prompt: str) -> None:
+    """Persist the constructed LLM prompt to disk (best effort)."""
+    if not prompt_dump_dir:
+        return
+    try:
+        out_dir = Path(prompt_dump_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        out_file = out_dir / f"prompt_iter_{iteration:04d}_{ts}.txt"
+        out_file.write_text(prompt, encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Could not dump HP tuning prompt for iteration %d: %s", iteration, exc)
+
+
 def _cuda_probe_ok() -> bool:
     """
-    Spawn a tiny subprocess that triggers CUDA initialisation.
+    Spawn a tiny subprocess that triggers CUDA initialisation via the
+    **driver** API (``libcuda.so.1``).
 
-    Returns ``True`` if CUDA is usable, ``False`` if the probe segfaults
-    or otherwise fails (e.g. broken driver under WSL 2).
+    Using the driver API instead of the runtime API (``libcudart.so``)
+    avoids segfaults caused by CUDA toolkit / driver version mismatches
+    that are common on WSL 2.
+
+    Returns ``True`` if CUDA is usable, ``False`` if the probe fails.
     """
     script = (
         "import ctypes, sys\n"
         "try:\n"
-        "    rt = ctypes.CDLL('libcudart.so')\n"
+        "    cuda = ctypes.CDLL('libcuda.so.1')\n"
+        "    rc = cuda.cuInit(0)\n"
+        "    if rc != 0:\n"
+        "        sys.exit(1)\n"
         "    n = ctypes.c_int(0)\n"
-        "    rc = rt.cudaGetDeviceCount(ctypes.byref(n))\n"
-        "    sys.exit(0 if rc == 0 and n.value > 0 else 1)\n"
+        "    cuda.cuDeviceGetCount(ctypes.byref(n))\n"
+        "    sys.exit(0 if n.value > 0 else 1)\n"
         "except Exception:\n"
         "    sys.exit(1)\n"
     )
@@ -207,9 +229,9 @@ def _build_prompt(
     """
     direction = "maximize" if maximize else "minimize"
     progress = iteration / n_iterations
-    if progress < 0.33:
+    if progress < 0.6:
         phase = "EXPLORE: try diverse, spread-out values"
-    elif progress < 0.66:
+    elif progress < 0.9:
         phase = "REFINE: narrow in on promising regions"
     else:
         phase = "EXPLOIT: fine-tune near the best configs found"
@@ -349,14 +371,17 @@ def _build_prompt(
 
     prompt = (
         f"You are an ML hyperparameter tuning agent. {direction} {scoring_metric}.\n"
+        f"Make sure you dont use the same config twice. Always respond with ONLY a JSON object containing the next HP config to try.\n"
         f"{ds_line}"
-        f"\nSearch space:\n{search_space}\n"
+        f"Be creative and try feasible ranges for the hyperparameters, not just small tweaks around the current values. The search space is:\n"
+        f"\n{search_space}\n"
         f"\n{history_text}"
         f"{best_text}"
         f"\nIteration {iteration}/{n_iterations}. Strategy: {phase}\n"
         f"\nRespond with ONLY a JSON object, no explanation.\n"
         f"Format: {example_json}"
     )
+
     return prompt
 
 
@@ -694,8 +719,10 @@ class AgentBasedTuner:
         n_iterations: int = 50,
         exploration_rate: float = 0.1,
         scoring_metric: str = "r2",
+        metric_source: str = "train",
         seed: int | None = None,
         data_info: dict[str, Any] | None = None,
+        prompt_dump_dir: str | None = None,
     ) -> dict[str, Any]:
         """
         Execute agent-based hyperparameter search.
@@ -708,9 +735,11 @@ class AgentBasedTuner:
         n_iterations : Number of HP evaluations.
         exploration_rate : Controls LLM temperature (0=greedy, 1=creative).
         scoring_metric : Metric name to optimise (e.g. ``'r2'``, ``'rmse'``).
+        metric_source : Which split to optimise on (``'train'`` or ``'holdout'``).
         seed : Optional random seed.
         data_info : Optional dict with training data metadata (n_samples,
             n_features, n_labels, column_dtypes, etc.).
+        prompt_dump_dir : Optional directory where each prompt is written.
 
         Returns
         -------
@@ -732,6 +761,14 @@ class AgentBasedTuner:
         if seed is not None:
             random.seed(seed)
 
+        metric_source_normalized = "holdout" if str(metric_source).lower() == "holdout" else "train"
+        if metric_source_normalized == "holdout" and not bool((data_info or {}).get("has_train_test_split")):
+            logger.warning(
+                "HP Tuner: holdout optimization requested but no upstream TrainTestSplit was detected; "
+                "falling back to train metrics."
+            )
+            metric_source_normalized = "train"
+
         maximize = _is_maximize(scoring_metric)
         history: list[dict[str, Any]] = []
 
@@ -739,9 +776,10 @@ class AgentBasedTuner:
         base_temp = 0.2 + exploration_rate * 0.8
 
         logger.info(
-            "HP Tuner: starting %d iterations (metric=%s, %s)",
+            "HP Tuner: starting %d iterations (metric=%s, source=%s, %s)",
             n_iterations,
             scoring_metric,
+            metric_source_normalized,
             "maximize" if maximize else "minimize",
         )
 
@@ -769,6 +807,7 @@ class AgentBasedTuner:
                 n_iterations,
                 data_info=data_info,
             )
+            _dump_prompt(prompt_dump_dir, iteration, prompt)
             # Anneal temperature: more exploration early, exploitation late
             progress = iteration / n_iterations
             temp = base_temp * (1.0 - 0.3 * progress)
@@ -829,7 +868,7 @@ class AgentBasedTuner:
                 train_score = metrics_full.get("train")
                 holdout_score = metrics_full.get("holdout")
                 n_params = metrics_full.get("n_params")
-                score = train_score
+                score = holdout_score if metric_source_normalized == "holdout" else train_score
             except Exception as exc:
                 logger.error(
                     "HP Tuner iter %d: pipeline run failed: %s",
@@ -842,10 +881,11 @@ class AgentBasedTuner:
                 score = -1e10 if maximize else 1e10
                 train_score = score
                 logger.warning(
-                    "HP Tuner iter %d: could not extract metric '%s' "
+                    "HP Tuner iter %d: could not extract metric '%s' from %s split "
                     "— assigned penalty score.",
                     iteration,
                     scoring_metric,
+                    metric_source_normalized,
                 )
 
             entry: dict[str, Any] = {

@@ -524,6 +524,7 @@ function collectDataInfo(
   const queue = [startNodeId];
   const inputNodes: import('../types').SurroNode[] = [];
   let holdoutRatio: number | undefined;
+  let hasTrainTestSplit = false;
 
   while (queue.length > 0) {
     const current = queue.pop()!;
@@ -544,6 +545,7 @@ function collectDataInfo(
         cat === 'feature_engineering' &&
         (d as FeatureEngineeringNodeData).method === 'TrainTestSplit'
       ) {
+        hasTrainTestSplit = true;
         const hp = (d as FeatureEngineeringNodeData).hyperparams ?? {};
         const hr = Number(hp.holdout_ratio);
         if (!Number.isNaN(hr)) holdoutRatio = hr;
@@ -584,6 +586,7 @@ function collectDataInfo(
     file_name: fileName,
     source,
     holdout_ratio: holdoutRatio,
+    has_train_test_split: hasTrainTestSplit,
   };
 }
 
@@ -635,6 +638,11 @@ function AgentBasedTunerUI({
 
     const predData = predictor.data as RegressorNodeData | ClassifierNodeData;
     const hp = predData.hyperparams ?? {};
+    const upstreamInfo = collectDataInfo(predictor.id, nodes, edges);
+    const hasTrainTestSplit = !!upstreamInfo?.has_train_test_split;
+    const currentMetricSource = String(data.hyperparams.metric_source || 'train');
+    const metricSource =
+      hasTrainTestSplit && currentMetricSource === 'holdout' ? 'holdout' : 'train';
 
     const tunableParams: HPTuneParam[] = Object.entries(hp).map(([key, value]) => {
       const type: HPTuneParam['type'] =
@@ -686,6 +694,8 @@ function AgentBasedTunerUI({
     });
 
     updateNodeData(nodeId, {
+      hasUpstreamTrainTestSplit: hasTrainTestSplit,
+      hyperparams: { ...data.hyperparams, metric_source: metricSource },
       connectedPredictorId: predictor.id,
       tunableParams,
       tuningStatus: 'idle',
@@ -694,7 +704,7 @@ function AgentBasedTunerUI({
       bestScore: undefined,
       tuningError: undefined,
     } as Partial<SurroNodeData>);
-  }, [findConnectedPredictor, nodeId, updateNodeData]);
+  }, [data.hyperparams, edges, findConnectedPredictor, nodeId, nodes, updateNodeData]);
 
   // ── Toggle HP selection ───────────────────────────────────────────────
   const toggleParamSelection = useCallback(
@@ -795,6 +805,11 @@ function AgentBasedTunerUI({
       return;
     }
 
+    const metricSource =
+      String(data.hyperparams.metric_source || 'train') === 'holdout' && data.hasUpstreamTrainTestSplit
+        ? 'holdout'
+        : 'train';
+
     setTuningRunning(true);
     updateNodeData(nodeId, {
       tuningStatus: 'running',
@@ -810,6 +825,7 @@ function AgentBasedTunerUI({
         storeState.nodes,
         storeState.edges,
       );
+      const activeTab = storeState.tabs.find((t) => t.id === storeState.activeTabId);
 
       const payload = {
         nodes: storeState.nodes.map((n) => ({
@@ -825,6 +841,8 @@ function AgentBasedTunerUI({
         })),
         tuner_node_id: nodeId,
         predictor_node_id: predictorId,
+        canvas_id: storeState.activeTabId,
+        canvas_name: activeTab?.name,
         selected_params: selected.map((p) => ({
           key: p.key,
           type: p.type,
@@ -838,6 +856,7 @@ function AgentBasedTunerUI({
         n_iterations: Number(data.hyperparams.n_iterations) || 50,
         exploration_rate: Number(data.hyperparams.exploration_rate) || 0.1,
         scoring_metric: String(data.hyperparams.scoring_metric || 'r2'),
+        metric_source: metricSource,
         seed: globalSeed,
         data_info: dataInfo,
       };
@@ -889,6 +908,11 @@ function AgentBasedTunerUI({
   const tunableParams = data.tunableParams ?? [];
   const selectedCount = tunableParams.filter((p) => p.selected).length;
   const tuningStatus = data.tuningStatus ?? 'idle';
+  const hasUpstreamTrainTestSplit = !!data.hasUpstreamTrainTestSplit;
+  const metricSource =
+    String(data.hyperparams.metric_source || 'train') === 'holdout' && hasUpstreamTrainTestSplit
+      ? 'holdout'
+      : 'train';
 
   return (
     <>
@@ -908,6 +932,31 @@ function AgentBasedTunerUI({
       {data.connectedPredictorId && (
         <p className="inspector__hint" style={{ fontSize: '0.72rem', opacity: 0.6, margin: '0 0 6px' }}>
           Connected to: {nodes.find((n) => n.id === data.connectedPredictorId)?.data?.label ?? data.connectedPredictorId}
+        </p>
+      )}
+
+      <label className="inspector__field" style={{ marginBottom: 8 }}>
+        <span>Optimize metric on</span>
+        <select
+          value={metricSource}
+          disabled={!hasUpstreamTrainTestSplit}
+          onChange={(e) =>
+            updateNodeData(nodeId, {
+              hyperparams: {
+                ...data.hyperparams,
+                metric_source: e.target.value,
+              },
+            } as Partial<SurroNodeData>)
+          }
+        >
+          <option value="train">Training set</option>
+          <option value="holdout">Holdout set</option>
+        </select>
+      </label>
+
+      {!hasUpstreamTrainTestSplit && (
+        <p className="inspector__hint" style={{ fontSize: '0.68rem', opacity: 0.6, margin: '0 0 8px' }}>
+          Holdout optimization is enabled after loading HPs when a TrainTestSplit node exists upstream.
         </p>
       )}
 
@@ -1072,7 +1121,7 @@ function AgentBasedTunerUI({
           {data.bestConfig && data.bestScore != null && (
             <div style={{ background: 'rgba(45,212,191,0.12)', borderRadius: 6, padding: '6px 8px', marginTop: 8, marginBottom: 4 }}>
               <div style={{ fontWeight: 600, fontSize: '0.82rem', marginBottom: 4 }}>
-                🏆 Best: {data.hyperparams.scoring_metric} = {data.bestScore.toFixed(6)}
+                🏆 Best: {data.hyperparams.scoring_metric} ({metricSource}) = {data.bestScore.toFixed(6)}
               </div>
               <div style={{ fontSize: '0.72rem', opacity: 0.8 }}>
                 {Object.entries(data.bestConfig).map(([k, v]) => (
@@ -1533,6 +1582,7 @@ export default function Inspector() {
                   <HyperParamsEditor
                     hyperparams={hpData.hyperparams}
                     onChange={handleHyperparamChange}
+                    filterKeys={(key) => key !== 'metric_source'}
                   />
 
                   {/* ── AgentBased-specific UI ─────────────────────────────── */}

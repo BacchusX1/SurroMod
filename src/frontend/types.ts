@@ -159,6 +159,8 @@ export interface HPTunerNodeData extends Record<string, unknown> {
   category: 'hp_tuner';
   method: HPTunerMethod;
   hyperparams: HyperParams;
+  /** True when predictor has an upstream TrainTestSplit node. */
+  hasUpstreamTrainTestSplit?: boolean;
   /** Node ID of the connected predictor (auto-detected from edges). */
   connectedPredictorId?: string;
   /** Hyperparameters loadable from the connected predictor. */

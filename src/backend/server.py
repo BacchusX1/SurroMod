@@ -18,6 +18,7 @@ import asyncio
 import logging
 import pickle
 import queue
+import re
 import shutil
 import sys
 import traceback
@@ -45,6 +46,10 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 WORKFLOWS_DIR = ROOT / "workflows"
 WORKFLOWS_DIR.mkdir(exist_ok=True)
+
+LOGGING_DIR = ROOT / "proj_dir" / "logging"
+LOGGING_DIR.mkdir(parents=True, exist_ok=True)
+GUI_LOG_FILE = LOGGING_DIR / "gui-output.log"
 
 # ── Log broadcasting infrastructure ──────────────────────────────────────
 
@@ -106,6 +111,26 @@ logging.basicConfig(
 
 # Attach the broadcaster to the root logger so ALL log messages are captured
 logging.getLogger().addHandler(log_broadcaster)
+
+
+def _ensure_gui_file_logger() -> None:
+    """Mirror GUI-visible backend logs into a persistent file."""
+    root_logger = logging.getLogger()
+    for h in root_logger.handlers:
+        if isinstance(h, logging.FileHandler):
+            try:
+                if Path(h.baseFilename).resolve() == GUI_LOG_FILE.resolve():
+                    return
+            except Exception:
+                pass
+
+    fh = logging.FileHandler(GUI_LOG_FILE, encoding="utf-8")
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-8s  %(name)s  %(message)s"))
+    root_logger.addHandler(fh)
+
+
+_ensure_gui_file_logger()
 
 logger = logging.getLogger(__name__)
 
@@ -429,10 +454,13 @@ class HPTunerAgentRunRequest(BaseModel):
     edges: list[dict[str, Any]]
     tuner_node_id: str
     predictor_node_id: str
+    canvas_id: str | None = None
+    canvas_name: str | None = None
     selected_params: list[dict[str, Any]]
     n_iterations: int = 50
     exploration_rate: float = 0.1
     scoring_metric: str = "r2"
+    metric_source: str = "train"
     seed: int | None = None
     data_info: dict[str, Any] | None = None
 
@@ -493,6 +521,24 @@ def _augment_data_info(raw_info: dict[str, Any] | None) -> dict[str, Any] | None
     return info
 
 
+def _sanitize_canvas_segment(value: str | None) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return "unknown"
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", raw)
+    return cleaned[:120] or "unknown"
+
+
+def _resolve_canvas_logging_dir(canvas_id: str | None, canvas_name: str | None) -> Path:
+    """Return the stable per-canvas logging directory under proj_dir/logging."""
+    cid = _sanitize_canvas_segment(canvas_id)
+    cname = _sanitize_canvas_segment(canvas_name)
+    folder = f"{cname}_{cid}" if cname != "unknown" else cid
+    out_dir = LOGGING_DIR / folder
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
+
+
 @app.post("/api/hp-tuner/agent/run")
 def hp_tuner_agent_run(req: HPTunerAgentRunRequest) -> dict[str, Any]:
     """
@@ -514,6 +560,10 @@ def hp_tuner_agent_run(req: HPTunerAgentRunRequest) -> dict[str, Any]:
         config_path = Path(__file__).parent / "backend_config.yaml"
         tuner = AgentBasedTuner(config_path=str(config_path))
 
+        canvas_log_dir = _resolve_canvas_logging_dir(req.canvas_id, req.canvas_name)
+        prompt_dump_dir = canvas_log_dir / "hp-tuning-prompt"
+        prompt_dump_dir.mkdir(parents=True, exist_ok=True)
+
         # Augment data_info with actual file statistics
         data_info = _augment_data_info(req.data_info)
 
@@ -525,8 +575,10 @@ def hp_tuner_agent_run(req: HPTunerAgentRunRequest) -> dict[str, Any]:
             n_iterations=req.n_iterations,
             exploration_rate=req.exploration_rate,
             scoring_metric=req.scoring_metric,
+            metric_source=req.metric_source,
             seed=req.seed,
             data_info=data_info,
+            prompt_dump_dir=str(prompt_dump_dir),
         )
 
         return {"ok": True, **result}

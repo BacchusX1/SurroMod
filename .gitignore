@@ -26,6 +26,7 @@ prompts.txt
 NYC.csv
 uploads/
 workflows/
+proj_dir/
 data/
 
 # Virtual Environments

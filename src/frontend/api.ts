@@ -170,6 +170,7 @@ export interface HPTuningDataInfo {
   /** Upload file ID so backend can read the actual file for n_samples / dtypes */
   source: string;
   holdout_ratio?: number;
+  has_train_test_split?: boolean;
 }
 
 export interface HPTuningRunRequest {
@@ -177,6 +178,8 @@ export interface HPTuningRunRequest {
   edges: any[];
   tuner_node_id: string;
   predictor_node_id: string;
+  canvas_id?: string;
+  canvas_name?: string;
   selected_params: {
     key: string;
     type: string;
@@ -190,6 +193,7 @@ export interface HPTuningRunRequest {
   n_iterations: number;
   exploration_rate: number;
   scoring_metric: string;
+  metric_source?: 'train' | 'holdout';
   seed?: number | null;
   data_info?: HPTuningDataInfo;
 }
