@@ -24,7 +24,7 @@ Built with React / React Flow (frontend) and Python / FastAPI (backend).
 
 ## Youtube Video showing Agent based HP Tuning (click on picture below to open)
 
-[![Video-Titel](./doc/pics/agent_based_hp_tuning)](https://www.youtube.com/watch?v=hb4ld41qEW0)
+[![Video-Titel](./doc/pics/agent_based_hp_tuning.png)](https://www.youtube.com/watch?v=hb4ld41qEW0)
 
 ## Quick Start
 
