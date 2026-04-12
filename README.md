@@ -213,27 +213,6 @@ test/
 
 ---
 
-## Reference Workflow — 3D Flow Prediction
-
-`workflows/3D-Field-Prediction_3535b822.pkl` is a complete GNN-based aerodynamic flow prediction pipeline:
-
-```
-BatchDigester (warped-ifw)
-  ├─ pos ──► SpatialGraphBuilder (k-NN)  ──► edge_index ──► GraphFlowForecaster
-  ├─ pos ──► SurfaceDistanceFeature ─┬─ dist ──► PointFeatureFusion
-  │                                  └─ mask ──► PointFeatureFusion
-  ├─ velocity_in ──► TemporalStackFlatten ──► PointFeatureFusion
-  ├─ velocity_in ──► SpectralDecomposer ──► TemporalStackFlatten (low-freq) ──► PointFeatureFusion
-  ├─ pos ──► PointFeatureFusion
-  └─ data ──► DatasetSplit ─────────────────────────────────► GraphFlowForecaster
-                                PointFeatureFusion ──► FeatureNormalizer ──► GraphFlowForecaster
-  GraphFlowForecaster ──► FlowForecastValidator
-                      ──► FieldSlicePlot (video comparison)
-                      ──► Model Exporter (GRaM)
-```
-
----
-
 ## Generating Third-Party License Files
 
 ```bash
