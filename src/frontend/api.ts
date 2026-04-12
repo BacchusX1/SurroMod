@@ -203,6 +203,17 @@ export interface HPTuningRunResult {
   history?: { iteration: number; config: Record<string, any>; score: number; train_score?: number | null; holdout_score?: number | null; n_params?: number | null }[];
   best_config?: Record<string, any>;
   best_score?: number;
+  stopped?: boolean;
+  error?: string;
+}
+
+export interface HPTuningStopRequest {
+  tuner_node_id: string;
+  canvas_id?: string;
+}
+
+export interface HPTuningStopResult {
+  ok: boolean;
   error?: string;
 }
 
@@ -239,4 +250,16 @@ export async function runAgentHPTuning(req: HPTuningRunRequest): Promise<HPTunin
   }
 
   return body as HPTuningRunResult;
+}
+
+/**
+ * Request cancellation of an active agent-based HP tuning run.
+ */
+export async function stopAgentHPTuning(req: HPTuningStopRequest): Promise<HPTuningStopResult> {
+  const res = await fetch('/api/hp-tuner/agent/stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  return res.json();
 }

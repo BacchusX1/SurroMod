@@ -13,15 +13,6 @@ export default function InputNode({ id, data, selected }: NodeProps) {
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
 
-  const kindIcons: Record<string, string> = {
-    scalar: '\u{1F522}',
-    time_series: '\u{1F4C8}',
-    '2d_field': '\u{1F5FA}\uFE0F',
-    '3d_field': '\u{1F310}',
-    '2d_geometry': '\u{1F4D0}',
-    '3d_geometry': '\u{1F4D0}',
-  };
-
   const fileName = d.fileName || '';
 
   const handleFileDrop = useCallback(
@@ -88,6 +79,25 @@ export default function InputNode({ id, data, selected }: NodeProps) {
     [handleFileDrop],
   );
 
+  const isTemporalPointCloud = d.inputKind === '3d_field' && d.hyperparams?.format_mode === 'Temporal Point Cloud Field';
+  const isPointCloudSurfaceMask = d.inputKind === '3d_geometry' && d.hyperparams?.format_mode === 'Point Cloud Surface Mask';
+  const isBatchMode = isTemporalPointCloud && Boolean(d.hyperparams?.batch_dir);
+
+  // Determine output ports for specialised formats
+  const outputPorts: { id: string; label: string }[] = [];
+  if (isTemporalPointCloud) {
+    // Named ports for explicitly connected data flows
+    outputPorts.push({ id: 'pos', label: 'pos' });
+    outputPorts.push({ id: 'velocity_in', label: 'vel_in' });
+    outputPorts.push({ id: 'surface_info', label: 'surface' });
+    // General data output carries full dataset (samples, vel_out, t, etc.)
+    outputPorts.push({ id: 'data', label: 'data' });
+  } else if (isPointCloudSurfaceMask) {
+    outputPorts.push({ id: 'geometry_mask', label: 'mask' });
+    outputPorts.push({ id: 'surface_points', label: 'surf_pts' });
+  }
+  const hasMultiOutput = outputPorts.length > 0;
+
   return (
     <div
       className={`surro-node surro-node--compact ${selected ? 'selected' : ''} ${dragOver ? 'surro-node--drop-active' : ''}`}
@@ -97,23 +107,62 @@ export default function InputNode({ id, data, selected }: NodeProps) {
       onDrop={onDrop}
     >
       <div className="surro-node__header surro-node__header--compact" style={{ background: accent }}>
-        <span className="surro-node__icon">{kindIcons[d.inputKind] ?? '\u{1F4C2}'}</span>
         <span className="surro-node__title">{d.label}</span>
       </div>
+      {isTemporalPointCloud && (
+        <div className="surro-node__tag" style={{ fontSize: '0.65rem', opacity: 0.85, padding: '1px 4px' }}>
+          {isBatchMode ? 'GRAM Batch' : 'Temporal Point Cloud'}
+        </div>
+      )}
+      {isPointCloudSurfaceMask && (
+        <div className="surro-node__tag" style={{ fontSize: '0.65rem', opacity: 0.85, padding: '1px 4px' }}>
+          Surface Mask
+        </div>
+      )}
       {uploading && (
         <div className="surro-node__upload-status">Uploading\u2026</div>
       )}
-      {!uploading && fileName && (
-        <div className="surro-node__file-badge" title={fileName}>
-          {'\u{1F4C4}'} {fileName.length > 20 ? fileName.slice(0, 18) + '\u2026' : fileName}
+      {!uploading && isBatchMode && (
+        <div className="surro-node__file-badge" title={d.hyperparams?.batch_dir as string}>
+          {(() => {
+            const dir = String(d.hyperparams?.batch_dir ?? '');
+            const parts = dir.split('/').filter(Boolean);
+            const short = parts.length > 0 ? parts[parts.length - 1] : dir;
+            return short.length > 18 ? short.slice(0, 16) + '\u2026' : short;
+          })()}
         </div>
       )}
-      {!uploading && !fileName && (
+      {!uploading && !isBatchMode && fileName && (
+        <div className="surro-node__file-badge" title={fileName}>
+          {fileName.length > 20 ? fileName.slice(0, 18) + '\u2026' : fileName}
+        </div>
+      )}
+      {!uploading && !isBatchMode && !fileName && (
         <div className="surro-node__drop-hint">
           Drop file here
         </div>
       )}
-      <Handle type="source" position={Position.Right} className="surro-handle" />
+      {isBatchMode && (
+        <div className="surro-node__detail" style={{ fontSize: '0.6rem', opacity: 0.7, padding: '0 4px' }}>
+          {d.hyperparams?.max_files ? `max ${d.hyperparams.max_files} files` : 'all files'}
+          {d.hyperparams?.max_points ? ` \u00b7 ${d.hyperparams.max_points} pts` : ''}
+        </div>
+      )}
+      {hasMultiOutput ? (
+        outputPorts.map((port, i) => (
+          <Handle
+            key={port.id}
+            type="source"
+            position={Position.Right}
+            id={port.id}
+            className="surro-handle"
+            style={{ top: `${((i + 1) / (outputPorts.length + 1)) * 100}%` }}
+            title={port.label}
+          />
+        ))
+      ) : (
+        <Handle type="source" position={Position.Right} className="surro-handle" title="data" />
+      )}
     </div>
   );
 }

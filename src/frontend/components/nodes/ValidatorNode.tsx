@@ -12,7 +12,6 @@ export default function ValidatorNode({ data, selected }: NodeProps) {
       style={{ borderColor: accent }}
     >
       <div className="surro-node__header" style={{ background: accent }}>
-        <span className="surro-node__icon">✅</span>
         <span className="surro-node__title">{d.label}</span>
       </div>
       <div className="surro-node__body">
@@ -23,7 +22,7 @@ export default function ValidatorNode({ data, selected }: NodeProps) {
           </span>
         )}
       </div>
-      <Handle type="target" position={Position.Left} className="surro-handle" />
+      <Handle type="target" position={Position.Left} className="surro-handle" title="in" />
     </div>
   );
 }

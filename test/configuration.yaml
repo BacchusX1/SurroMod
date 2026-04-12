@@ -37,4 +37,20 @@ workflows:
       - name: "KRR"                # simple KRR
         min_r2: 0.8
 
+# ── 3D flow prediction workflows ─────────────────────────────────────────
+# These use GraphFlowForecaster with train/test R² targets.
+
+flow_prediction_workflows:
+
+  3D-Field-Prediction_3535b822.pkl:
+    description: >
+      Flat GFF pipeline: SpatialGraphBuilder (k=8 kNN) + TemporalStackFlatten +
+      SpectralDecomposer (FFT) + SurfaceDistanceFeature + PointFeatureFusion +
+      FeatureNormalizer → GraphFlowForecaster (mean_field baseline, latent=64,
+      hidden=128, 3 MP layers, mean agg, initial skip, cosine LR, 100 epochs).
+      All 162 simulations: 71% train / 14% val / 14% test.
+    regressor_node: "GraphFlowForecaster"
+    min_r2_train: 0.1
+    min_r2_test: -2.0
+
 

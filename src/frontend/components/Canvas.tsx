@@ -23,6 +23,9 @@ import InferenceNode from './nodes/InferenceNode';
 import HPTunerNode from './nodes/HPTunerNode';
 import RBLNode from './nodes/RBLNode';
 import RBLAggregatorNode from './nodes/RBLAggregatorNode';
+import PostProcessingNode from './nodes/PostProcessingNode';
+import CodeExporterNode from './nodes/CodeExporterNode';
+import GRAMExporterNode from './nodes/GRAMExporterNode';
 
 // Register custom node types (keys must match node.type stored in the store)
 const nodeTypes = {
@@ -35,22 +38,26 @@ const nodeTypes = {
   hp_tuner: HPTunerNode,
   rbl: RBLNode,
   rbl_aggregator: RBLAggregatorNode,
+  postprocessing: PostProcessingNode,
+  code_exporter: CodeExporterNode,
+  gram_exporter: GRAMExporterNode,
 };
 
 // ─── Sidebar ────────────────────────────────────────────────────────────────
 
 function Sidebar() {
-  const [collapsed, setCollapsed] = useState<Record<NodeCategory, boolean>>({
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({
     input: false,
     regressor: false,
     classifier: false,
-    validator: false,
     feature_engineering: false,
     inference: false,
     hp_tuner: false,
+    postprocessing: false,
+    code_exporter: false,
   });
 
-  const toggle = (cat: NodeCategory) =>
+  const toggle = (cat: string) =>
     setCollapsed((prev) => ({ ...prev, [cat]: !prev[cat] }));
 
   const onDragStart = (event: React.DragEvent, data: SurroNodeData) => {
@@ -59,13 +66,14 @@ function Sidebar() {
   };
 
   const categories: { key: NodeCategory; title: string }[] = [
-    { key: 'input', title: '📂 Data Input' },
-    { key: 'feature_engineering', title: '🔧 Feature Engineering' },
-    { key: 'regressor', title: '📈 Regressors' },
-    { key: 'classifier', title: '🏷️ Classifiers' },
-    { key: 'hp_tuner', title: '🎯 HP Tuner' },
-    { key: 'validator', title: '✅ Validators' },
-    { key: 'inference', title: '🚀 Inference' },
+    { key: 'input', title: 'Data Input' },
+    { key: 'feature_engineering', title: 'Feature Engineering' },
+    { key: 'regressor', title: 'Regressors' },
+    { key: 'classifier', title: 'Classifiers' },
+    { key: 'hp_tuner', title: 'HP Tuner' },
+    { key: 'inference', title: 'Inference' },
+    { key: 'postprocessing', title: 'Postprocessing' },
+    { key: 'code_exporter', title: 'Exporters' },
   ];
 
   return (
@@ -79,25 +87,34 @@ function Sidebar() {
             style={{ borderLeftColor: categoryColor[key] }}
           >
             {title}
-            <span className="sidebar__chevron">
-              {collapsed[key] ? '▸' : '▾'}
-            </span>
           </button>
           {!collapsed[key] && (
             <div className="sidebar__items">
               {paletteItems
                 .filter((p) => p.category === key)
-                .map((item) => (
-                  <div
-                    key={item.label}
-                    className="sidebar__item"
-                    style={{ borderLeftColor: categoryColor[key] }}
-                    draggable
-                    onDragStart={(e) => onDragStart(e, item.defaultData)}
-                  >
-                    {item.label}
-                  </div>
-                ))}
+                .map((item) => {
+                  const isImplemented = item.implemented !== false;
+                  return (
+                    <div
+                      key={item.label}
+                      className={`sidebar__item${isImplemented ? '' : ' sidebar__item--disabled'}`}
+                      style={{
+                        borderLeftColor: isImplemented ? categoryColor[key] : '#555',
+                        opacity: isImplemented ? 1 : 0.4,
+                        cursor: isImplemented ? 'grab' : 'not-allowed',
+                        color: isImplemented ? undefined : '#888',
+                      }}
+                      draggable={isImplemented}
+                      onDragStart={isImplemented ? (e) => onDragStart(e, item.defaultData) : undefined}
+                      title={isImplemented ? undefined : 'Not yet implemented'}
+                    >
+                      {item.label}
+                      {!isImplemented && (
+                        <span style={{ marginLeft: 6, fontSize: '0.7em', fontStyle: 'italic' }}>soon</span>
+                      )}
+                    </div>
+                  );
+                })}
             </div>
           )}
         </div>

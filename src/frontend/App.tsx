@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import Canvas from './components/Canvas';
 import Inspector from './components/Inspector';
 import OutputPanel from './components/OutputPanel';
@@ -154,7 +154,7 @@ function SettingsModal() {
           </label>
           <label className="settings-modal__field">
             <span>Random Seed</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div className="settings-modal__control-row">
               <input
                 type="number"
                 min={0}
@@ -165,21 +165,20 @@ function SettingsModal() {
                   const val = e.target.value.trim();
                   setGlobalSeed(val === '' ? null : parseInt(val, 10));
                 }}
-                style={{ width: '180px' }}
+                className="settings-modal__seed-input"
               />
               {globalSeed !== null && (
                 <button
                   className="settings-modal__clear-seed"
                   onClick={() => setGlobalSeed(null)}
                   title="Clear seed"
-                  style={{ padding: '2px 8px', fontSize: '12px' }}
                 >
                   Clear
                 </button>
               )}
             </div>
           </label>
-          <p className="settings-modal__hint" style={{ fontSize: '11px', opacity: 0.7, marginTop: '2px' }}>
+          <p className="settings-modal__hint">
             Set a seed to make all training runs reproducible.
           </p>
         </div>
@@ -234,8 +233,16 @@ function ResizableInspector() {
 // ─── App ────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const { theme, toggleSettings, runPipeline, pipelineRunning, pipelineError, toggleOutputPanel } = useStore();
+  const { theme, toggleSettings, runPipeline, stopEverything, pipelineRunning, pipelineError, toggleOutputPanel, showConnectionLabels, toggleConnectionLabels } = useStore();
   const loadInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (showConnectionLabels) {
+      document.documentElement.classList.add('show-connection-labels');
+    } else {
+      document.documentElement.classList.remove('show-connection-labels');
+    }
+  }, [showConnectionLabels]);
 
   const handleSave = useCallback(() => {
     const name = prompt('Workflow name:', useStore.getState().tabs.find(
@@ -266,6 +273,13 @@ export default function App() {
         </h1>
         <div className="app__spacer" />
         <button
+          className={`app__btn${showConnectionLabels ? ' app__btn--active' : ''}`}
+          onClick={toggleConnectionLabels}
+          title="Toggle connection labels"
+        >
+          ⌗ Labels
+        </button>
+        <button
           className="app__btn"
           onClick={handleSave}
           title="Save workflow to file"
@@ -294,6 +308,14 @@ export default function App() {
           disabled={pipelineRunning}
         >
           {pipelineRunning ? '⏳ Running…' : '▶ Run'}
+        </button>
+        <button
+          className="app__btn app__btn--stop"
+          title="Stop all running operations"
+          onClick={stopEverything}
+          disabled={!pipelineRunning}
+        >
+          ⏹ Stop
         </button>
         <button className="app__btn app__btn--debug" title="Debug (step-by-step)">
           🐛 Debug

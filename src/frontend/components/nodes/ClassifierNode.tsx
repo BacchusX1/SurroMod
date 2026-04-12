@@ -18,15 +18,14 @@ export default function ClassifierNode({ data, selected }: NodeProps) {
       style={{ borderColor: accent }}
     >
       <div className="surro-node__header" style={{ background: accent }}>
-        <span className="surro-node__icon">🏷️</span>
         <span className="surro-node__title">{d.label}</span>
       </div>
       <div className="surro-node__body">
         <span className="surro-node__tag">{d.model}</span>
         {preview && <span className="surro-node__detail">{preview}</span>}
       </div>
-      <Handle type="target" position={Position.Left} className="surro-handle" />
-      <Handle type="source" position={Position.Right} className="surro-handle" />
+      <Handle type="target" position={Position.Left} className="surro-handle" title="in" />
+      <Handle type="source" position={Position.Right} className="surro-handle" title="out" />
     </div>
   );
 }

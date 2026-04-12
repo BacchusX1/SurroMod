@@ -19,7 +19,7 @@ import type {
   MultiModelEntry,
 } from '../types';
 import { categoryColor, advancedKeys } from '../utils';
-import { uploadFile, fetchStructure, runAgentHPTuning } from '../api';
+import { uploadFile, fetchStructure, runAgentHPTuning, stopAgentHPTuning } from '../api';
 import type { DataStructure, HPTuningDataInfo } from '../api';
 
 const HPTunerAnalytics = lazy(() => import('./HPTunerAnalytics'));
@@ -118,6 +118,83 @@ const selectOptions: Record<string, { label: string; value: string }[]> = {
     { label: 'CMA-ES', value: 'cma_es' },
     { label: 'Random', value: 'random' },
     { label: 'Bayesian', value: 'bayesian' },
+  ],
+  graph_mode: [
+    { label: 'K-Nearest Neighbours', value: 'knn' },
+    { label: 'Radius', value: 'radius' },
+  ],
+  flatten_order: [
+    { label: 'Time Major', value: 'time_major' },
+  ],
+  format_mode: [
+    { label: 'Temporal Point Cloud Field', value: 'Temporal Point Cloud Field' },
+    { label: 'Point Cloud Surface Mask', value: 'Point Cloud Surface Mask' },
+  ],
+  data_kind: [
+    { label: 'Scalar (Regression)', value: 'scalar' },
+    { label: '3D Field (Warped / GRaM)', value: '3d_field' },
+  ],
+  split_mode: [
+    { label: 'Random', value: 'random' },
+    { label: 'Sequential', value: 'sequential' },
+  ],
+  baseline_mode: [
+    { label: 'None (direct prediction)', value: 'none' },
+    { label: 'Persistence (last frame)', value: 'persistence' },
+    { label: 'Linear Extrapolation', value: 'linear_extrapolation' },
+    { label: 'Mean Field', value: 'mean_field' },
+    { label: 'Polynomial (deg-2)', value: 'polynomial' },
+    { label: 'Exponential Smoothing', value: 'exponential_smoothing' },
+  ],
+  aggregation_mode: [
+    { label: 'Mean', value: 'mean' },
+    { label: 'Attention', value: 'attention' },
+    { label: 'Max', value: 'max' },
+  ],
+  skip_connection_mode: [
+    { label: 'None', value: 'none' },
+    { label: 'Initial Residual (JKNet)', value: 'initial' },
+    { label: 'Dense (DenseNet)', value: 'dense' },
+  ],
+  normalizer_mode: [
+    { label: 'Standard (z-score)', value: 'standard' },
+    { label: 'Min-Max [0,1]', value: 'minmax' },
+    { label: 'Robust (IQR)', value: 'robust' },
+  ],
+  spectral_method: [
+    { label: 'FFT', value: 'fft' },
+    { label: 'Wavelet (DWT)', value: 'wavelet' },
+  ],
+  scheduler: [
+    { label: 'None', value: 'none' },
+    { label: 'Plateau', value: 'plateau' },
+    { label: 'Cosine', value: 'cosine' },
+    { label: 'Step', value: 'step' },
+  ],
+  slice_plane: [
+    { label: 'XY', value: 'xy' },
+    { label: 'YZ', value: 'yz' },
+    { label: 'XZ', value: 'xz' },
+  ],
+  field_component: [
+    { label: 'Magnitude', value: 'magnitude' },
+    { label: 'Vx', value: 'vx' },
+    { label: 'Vy', value: 'vy' },
+    { label: 'Vz', value: 'vz' },
+  ],
+  colormap: [
+    { label: 'Turbo', value: 'turbo' },
+    { label: 'Viridis', value: 'viridis' },
+    { label: 'Plasma', value: 'plasma' },
+    { label: 'Coolwarm', value: 'coolwarm' },
+    { label: 'Jet', value: 'jet' },
+    { label: 'Inferno', value: 'inferno' },
+  ],
+  error_colormap: [
+    { label: 'Hot', value: 'hot' },
+    { label: 'Reds', value: 'Reds' },
+    { label: 'Oranges', value: 'Oranges' },
+    { label: 'YlOrRd', value: 'YlOrRd' },
   ],
 };
 
@@ -487,7 +564,7 @@ const defaultNumericRanges: Record<string, { min: number; max: number; step?: nu
   hidden_size: { min: 8, max: 512, step: 8 },
   num_layers: { min: 1, max: 10, step: 1 },
   gradient_clipping: { min: 0, max: 10, step: 0.1 },
-  latent_dim: { min: 2, max: 128, step: 1 },
+  latent_dim: { min: 2, max: 512, step: 1 },
   n_components: { min: 1, max: 50, step: 1 },
   n_neighbors: { min: 1, max: 50, step: 1 },
   min_samples_split: { min: 2, max: 20, step: 1 },
@@ -497,9 +574,40 @@ const defaultNumericRanges: Record<string, { min: number; max: number; step?: nu
   lr_scheduler_step_size: { min: 1, max: 50, step: 1 },
   lr_scheduler_gamma: { min: 0.01, max: 1.0, step: 0.01 },
   lr_scheduler_patience: { min: 1, max: 50, step: 1 },
-  early_stopping_patience: { min: 1, max: 50, step: 1 },
-  physics_loss_weight: { min: 0.001, max: 10, step: 0.001 },
+  early_stopping_patience: { min: 1, max: 100, step: 1 },
+  physics_loss_weight: { min: 0.0, max: 10, step: 0.01 },
   output_dim: { min: 1, max: 256, step: 1 },
+  // GFF-specific
+  hidden_dim: { min: 32, max: 512, step: 32 },
+  num_message_passing_layers: { min: 1, max: 6, step: 1 },
+  num_epochs: { min: 10, max: 2000, step: 10 },
+  // SpatialGraphBuilder
+  k: { min: 4, max: 64, step: 1 },
+  radius: { min: 0.001, max: 1.0, step: 0.001 },
+  max_neighbors: { min: 4, max: 128, step: 4 },
+  // SpectralDecomposer
+  cutoff_freq: { min: 0.05, max: 1.0, step: 0.05 },
+  wavelet_levels: { min: 1, max: 6, step: 1 },
+  // HierarchicalGraphBuilder
+  fine_k: { min: 4, max: 32, step: 1 },
+  coarse_ratio: { min: 0.02, max: 0.3, step: 0.01 },
+  coarse_k: { min: 4, max: 32, step: 1 },
+  k_unpool: { min: 1, max: 8, step: 1 },
+  // TemporalXLSTMEncoder
+  head_dim: { min: 4, max: 64, step: 4 },
+  // GFF hierarchical
+  xlstm_head_dim: { min: 4, max: 64, step: 4 },
+  xlstm_num_layers: { min: 1, max: 6, step: 1 },
+  xlstm_output_dim: { min: 16, max: 256, step: 16 },
+  num_fine_mp_layers: { min: 1, max: 8, step: 1 },
+  num_coarse_mp_layers: { min: 1, max: 8, step: 1 },
+  proximity_loss_weight: { min: 0.0, max: 10.0, step: 0.5 },
+  proximity_sigma: { min: 0.001, max: 0.2, step: 0.001 },
+  // FieldSlicePlot
+  iso_grid_res: { min: 100, max: 1200, step: 100 },
+  contour_levels: { min: 5, max: 64, step: 1 },
+  body_outline_lw: { min: 0.2, max: 4.0, step: 0.2 },
+  num_samples_per_set: { min: 1, max: 10, step: 1 },
 };
 
 /**
@@ -540,15 +648,21 @@ function collectDataInfo(
         inputNodes.push(node);
       }
 
-      // Check for TrainTestSplit to extract holdout_ratio
-      if (
-        cat === 'feature_engineering' &&
-        (d as FeatureEngineeringNodeData).method === 'TrainTestSplit'
-      ) {
-        hasTrainTestSplit = true;
+      // Check for DatasetSplit (scalar mode) or legacy TrainTestSplit
+      if (cat === 'feature_engineering') {
+        const feMethod = (d as FeatureEngineeringNodeData).method;
         const hp = (d as FeatureEngineeringNodeData).hyperparams ?? {};
-        const hr = Number(hp.holdout_ratio);
-        if (!Number.isNaN(hr)) holdoutRatio = hr;
+        if (feMethod === 'DatasetSplit' && (hp.data_kind === 'scalar' || !hp.data_kind)) {
+          hasTrainTestSplit = true;
+          const hr = Number(hp.test_ratio);
+          if (!Number.isNaN(hr)) holdoutRatio = hr;
+        }
+        // Legacy backward compat (old workflows may still have TrainTestSplit nodes)
+        if ((feMethod as string) === 'TrainTestSplit') {
+          hasTrainTestSplit = true;
+          const hr = Number(hp.holdout_ratio);
+          if (!Number.isNaN(hr)) holdoutRatio = hr;
+        }
       }
     }
 
@@ -606,6 +720,8 @@ function AgentBasedTunerUI({
   globalSeed: number | null;
 }) {
   const [tuningRunning, setTuningRunning] = useState(false);
+  const [tuningStopping, setTuningStopping] = useState(false);
+  const runningJobRef = useRef<{ canvas_id?: string; tuner_node_id: string } | null>(null);
   // Local raw-text state for discrete value inputs so semicolons aren't
   // immediately stripped by the parse→join round-trip on every keystroke.
   const [discreteRawText, setDiscreteRawText] = useState<Record<string, string>>({});
@@ -826,6 +942,10 @@ function AgentBasedTunerUI({
         storeState.edges,
       );
       const activeTab = storeState.tabs.find((t) => t.id === storeState.activeTabId);
+      runningJobRef.current = {
+        canvas_id: storeState.activeTabId,
+        tuner_node_id: nodeId,
+      };
 
       const payload = {
         nodes: storeState.nodes.map((n) => ({
@@ -856,7 +976,7 @@ function AgentBasedTunerUI({
         n_iterations: Number(data.hyperparams.n_iterations) || 50,
         exploration_rate: Number(data.hyperparams.exploration_rate) || 0.1,
         scoring_metric: String(data.hyperparams.scoring_metric || 'r2'),
-        metric_source: metricSource,
+        metric_source: metricSource as 'train' | 'holdout',
         seed: globalSeed,
         data_info: dataInfo,
       };
@@ -865,11 +985,11 @@ function AgentBasedTunerUI({
 
       if (result.ok) {
         updateNodeData(nodeId, {
-          tuningStatus: 'done',
+          tuningStatus: result.stopped ? 'stopped' : 'done',
           tuningResults: result.history as HPTuningIterationResult[],
           bestConfig: result.best_config as Record<string, string | number | boolean>,
           bestScore: result.best_score,
-          tuningError: undefined,
+          tuningError: result.stopped ? 'Tuning stopped by user.' : undefined,
         } as Partial<SurroNodeData>);
       } else {
         updateNodeData(nodeId, {
@@ -885,8 +1005,34 @@ function AgentBasedTunerUI({
       } as Partial<SurroNodeData>);
     } finally {
       setTuningRunning(false);
+      setTuningStopping(false);
+      runningJobRef.current = null;
     }
   }, [data, nodeId, updateNodeData, globalSeed]);
+
+  // ── Stop tuning ─────────────────────────────────────────────────────
+  const stopTuning = useCallback(async () => {
+    if (!tuningRunning || tuningStopping) return;
+    setTuningStopping(true);
+
+    try {
+      const storeState = useStore.getState();
+      const job = runningJobRef.current ?? {
+        canvas_id: storeState.activeTabId,
+        tuner_node_id: nodeId,
+      };
+
+      const res = await stopAgentHPTuning(job);
+      if (!res.ok) {
+        alert(res.error ?? 'Failed to stop tuning.');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Failed to stop tuning: ${msg}`);
+    } finally {
+      setTuningStopping(false);
+    }
+  }, [nodeId, tuningRunning, tuningStopping]);
 
   // ── Apply best config to predictor ────────────────────────────────────
   const applyBestConfig = useCallback(() => {
@@ -1092,24 +1238,37 @@ function AgentBasedTunerUI({
           </div>
 
           {/* ── Run / status ─────────────────────────────────────────── */}
-          <button
-            className="btn"
-            onClick={startTuning}
-            disabled={tuningRunning || selectedCount === 0}
-            style={{
-              width: '100%',
-              marginBottom: 6,
-              background: tuningRunning ? '#555' : '#2dd4bf',
-              color: '#000',
-              fontWeight: 600,
-            }}
-          >
-            {tuningRunning ? '⏳ Tuning in progress…' : '▶ Start Tuning'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <button
+              className="btn"
+              onClick={startTuning}
+              disabled={tuningRunning || tuningStopping || selectedCount === 0}
+              style={{
+                background: tuningRunning ? '#555' : '#2dd4bf',
+                color: '#000',
+                fontWeight: 600,
+              }}
+            >
+              {tuningRunning ? 'Tuning in progress…' : 'Start Tuning'}
+            </button>
+            <button
+              className="btn btn--danger"
+              onClick={stopTuning}
+              disabled={!tuningRunning || tuningStopping}
+              style={{ fontWeight: 600 }}
+            >
+              {tuningStopping ? 'Stopping…' : 'Stop Tuning'}
+            </button>
+          </div>
 
           {tuningStatus === 'error' && data.tuningError && (
             <p style={{ color: '#f87171', fontSize: '0.78rem', margin: '4px 0' }}>
               Error: {data.tuningError}
+            </p>
+          )}
+          {tuningStatus === 'stopped' && (
+            <p style={{ color: 'var(--text-dim)', fontSize: '0.78rem', margin: '4px 0' }}>
+              Tuning was stopped.
             </p>
           )}
         </>
@@ -1393,6 +1552,153 @@ export default function Inspector() {
               </button>
             )}
 
+            {/* ── 3D Field format options ── */}
+            {(data as InputNodeData).inputKind === '3d_field' && (
+              <>
+                <div className="inspector__section-title">Format</div>
+                <label className="inspector__field">
+                  <span>Format mode</span>
+                  <select
+                    value={(data as InputNodeData).hyperparams?.format_mode as string ?? 'Temporal Point Cloud Field'}
+                    onChange={(e) =>
+                      updateNodeData(selectedNodeId, {
+                        hyperparams: { ...(data as InputNodeData).hyperparams, format_mode: e.target.value },
+                      } as Partial<SurroNodeData>)
+                    }
+                  >
+                    <option value="Temporal Point Cloud Field">Temporal Point Cloud Field</option>
+                  </select>
+                </label>
+                {(data as InputNodeData).hyperparams?.format_mode === 'Temporal Point Cloud Field' && (
+                  <>
+                    <div className="inspector__section-title">Data Directory (Batch Mode)</div>
+                    <label className="inspector__field">
+                      <span>Directory path</span>
+                      <input
+                        type="text"
+                        placeholder="/path/to/gram/npz/files"
+                        value={(data as InputNodeData).hyperparams?.batch_dir as string ?? ''}
+                        onChange={(e) =>
+                          updateNodeData(selectedNodeId, {
+                            hyperparams: { ...(data as InputNodeData).hyperparams, batch_dir: e.target.value },
+                          } as Partial<SurroNodeData>)
+                        }
+                      />
+                    </label>
+                    <p className="inspector__hint" style={{ fontSize: '0.68rem', opacity: 0.6, margin: '0 0 8px' }}>
+                      Set a directory to enable batch mode. Leave empty for single-file mode (drop file above).
+                    </p>
+
+                    <div className="inspector__section-title">GRaM Dataset Options</div>
+                    <label className="inspector__field">
+                      <span>Geometry filter</span>
+                      <input
+                        type="text"
+                        placeholder="e.g. airfoil01, airfoil02 (empty = all)"
+                        value={(data as InputNodeData).hyperparams?.geometry_filter as string ?? ''}
+                        onChange={(e) =>
+                          updateNodeData(selectedNodeId, {
+                            hyperparams: { ...(data as InputNodeData).hyperparams, geometry_filter: e.target.value },
+                          } as Partial<SurroNodeData>)
+                        }
+                      />
+                    </label>
+                    <p className="inspector__hint" style={{ fontSize: '0.68rem', opacity: 0.6, margin: '0 0 6px' }}>
+                      Comma-separated geometry IDs to include. Leave empty to train on all geometries.
+                    </p>
+
+                    <label className="inspector__field">
+                      <span>Max files (0 = all)</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={Number((data as InputNodeData).hyperparams?.max_files ?? 0)}
+                        onChange={(e) =>
+                          updateNodeData(selectedNodeId, {
+                            hyperparams: { ...(data as InputNodeData).hyperparams, max_files: parseInt(e.target.value, 10) || 0 },
+                          } as Partial<SurroNodeData>)
+                        }
+                      />
+                    </label>
+                    <p className="inspector__hint" style={{ fontSize: '0.68rem', opacity: 0.6, margin: '0 0 6px' }}>
+                      Limit the number of files loaded for fast training runs.
+                    </p>
+
+                    <label className="inspector__field">
+                      <span>Max simulations (0 = all)</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={Number((data as InputNodeData).hyperparams?.max_simulations ?? 0)}
+                        onChange={(e) =>
+                          updateNodeData(selectedNodeId, {
+                            hyperparams: { ...(data as InputNodeData).hyperparams, max_simulations: parseInt(e.target.value, 10) || 0 },
+                          } as Partial<SurroNodeData>)
+                        }
+                      />
+                    </label>
+                    <p className="inspector__hint" style={{ fontSize: '0.68rem', opacity: 0.6, margin: '0 0 6px' }}>
+                      Limit unique simulations loaded. All windows per chosen simulation are kept.
+                    </p>
+
+                    <label className="inspector__field">
+                      <span>Max points / downsample (0 = no limit)</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={100}
+                        value={Number((data as InputNodeData).hyperparams?.max_points ?? 0)}
+                        onChange={(e) =>
+                          updateNodeData(selectedNodeId, {
+                            hyperparams: { ...(data as InputNodeData).hyperparams, max_points: parseInt(e.target.value, 10) || 0 },
+                          } as Partial<SurroNodeData>)
+                        }
+                      />
+                    </label>
+                    <p className="inspector__hint" style={{ fontSize: '0.68rem', opacity: 0.6, margin: '0 0 6px' }}>
+                      Subsample each mesh to this many points for fast tests. Keeps airfoil surface points.
+                    </p>
+
+                    <div className="inspector__section-title">Field Selection</div>
+                    {(['field_select_pos', 'field_select_velocity_in', 'field_select_velocity_out', 'field_select_t'] as const).map((key) => (
+                      <label key={key} className="inspector__field inspector__field--checkbox">
+                        <span>{key.replace('field_select_', '').replace(/_/g, ' ')}</span>
+                        <input
+                          type="checkbox"
+                          checked={Boolean((data as InputNodeData).hyperparams?.[key] ?? true)}
+                          onChange={(e) =>
+                            updateNodeData(selectedNodeId, {
+                              hyperparams: { ...(data as InputNodeData).hyperparams, [key]: e.target.checked },
+                            } as Partial<SurroNodeData>)
+                          }
+                        />
+                      </label>
+                    ))}
+                  </>
+                )}
+              </>
+            )}
+
+            {/* ── 3D Geometry format options ── */}
+            {(data as InputNodeData).inputKind === '3d_geometry' && (
+              <>
+                <div className="inspector__section-title">Format</div>
+                <label className="inspector__field">
+                  <span>Format mode</span>
+                  <select
+                    value={(data as InputNodeData).hyperparams?.format_mode as string ?? 'Point Cloud Surface Mask'}
+                    onChange={(e) =>
+                      updateNodeData(selectedNodeId, {
+                        hyperparams: { ...(data as InputNodeData).hyperparams, format_mode: e.target.value },
+                      } as Partial<SurroNodeData>)
+                    }
+                  >
+                    <option value="Point Cloud Surface Mask">Point Cloud Surface Mask</option>
+                  </select>
+                </label>
+              </>
+            )}
+
             {(data as InputNodeData).columns?.length > 0 && (
               <>
                 <div className="inspector__section-title">
@@ -1484,6 +1790,7 @@ export default function Inspector() {
                 <option value="classifier_validator">Classifier Validator</option>
                 <option value="regressor_validator">Regressor Validator</option>
                 <option value="relation_seeker">Relation Seeker</option>
+                <option value="flow_forecast_validator">Flow Forecast Validator</option>
               </select>
             </label>
 
@@ -1540,6 +1847,34 @@ export default function Inspector() {
                 }
               />
             </label>
+            {(data as InferenceNodeData).inferenceKind === 'flow_model_inference' && (
+              <>
+                <div className="inspector__section-title">Flow Inference Parameters</div>
+                <HyperParamsEditor
+                  hyperparams={(data as InferenceNodeData).hyperparams ?? {}}
+                  onChange={handleHyperparamChange}
+                />
+              </>
+            )}
+          </>
+        )}
+
+        {/* ── Postprocessing ────────────────────────────────────────────────────── */}
+        {data.category === 'postprocessing' && (
+          <>
+            <label className="inspector__field">
+              <span>Kind</span>
+              <input
+                type="text"
+                value={(data as any).postprocessingKind?.replace(/_/g, ' ') ?? ''}
+                disabled
+              />
+            </label>
+            <div className="inspector__section-title">Parameters</div>
+            <HyperParamsEditor
+              hyperparams={(data as any).hyperparams ?? {}}
+              onChange={handleHyperparamChange}
+            />
           </>
         )}
 
@@ -1711,6 +2046,133 @@ export default function Inspector() {
             Computes ŷ = z + r (primary prediction + residual correction).
           </p>
         )}
+
+        {/* ── GRaM Exporter ─────────────────────────────────────────────── */}
+        {data.category === 'gram_exporter' && (() => {
+          const gd = data as import('../types').GRAMExporterNodeData;
+          const hp = gd.hyperparams ?? {} as typeof gd.hyperparams;
+          const setHp = (patch: Partial<typeof hp>) =>
+            updateNodeData(selectedNodeId, {
+              hyperparams: { ...hp, ...patch },
+            } as Partial<import('../types').SurroNodeData>);
+          return (
+            <>
+              <div className="inspector__section-title">GRaM Submission Settings</div>
+
+              <label className="inspector__field">
+                <span>GRaM Repo Dir</span>
+                <input type="text" value={hp.gram_repo_dir ?? './gram_repo'}
+                  placeholder="./gram_repo"
+                  onChange={(e) => setHp({ gram_repo_dir: e.target.value })} />
+              </label>
+
+              <label className="inspector__field">
+                <span>Model Name</span>
+                <input type="text" value={hp.model_name ?? 'surromod_gff'}
+                  placeholder="surromod_gff"
+                  onChange={(e) => setHp({ model_name: e.target.value })} />
+              </label>
+
+              <label className="inspector__field">
+                <span>Team Name</span>
+                <input type="text" value={hp.team_name ?? ''}
+                  placeholder="Your Team Name"
+                  onChange={(e) => setHp({ team_name: e.target.value })} />
+              </label>
+
+              <label className="inspector__field inspector__field--toggle">
+                <span>Auto Push Branch</span>
+                <input type="checkbox" checked={!!hp.auto_push}
+                  onChange={(e) => setHp({ auto_push: e.target.checked })} />
+              </label>
+
+              <label className="inspector__field inspector__field--toggle">
+                <span>Create PR automatically</span>
+                <input type="checkbox" checked={!!hp.create_pr}
+                  onChange={(e) => setHp({ create_pr: e.target.checked })} />
+              </label>
+
+              {(hp.auto_push || hp.create_pr) && (
+                <label className="inspector__field">
+                  <span>GitHub Token</span>
+                  <input type="password" value={hp.github_token ?? ''}
+                    placeholder="ghp_…"
+                    onChange={(e) => setHp({ github_token: e.target.value })} />
+                </label>
+              )}
+
+              {gd.exportStatus === 'done' && gd.exportDir && (
+                <p className="inspector__hint" style={{ color: '#34d399', fontSize: '0.8rem', margin: '0.5rem 0' }}>
+                  ✔ Exported to: <code>{gd.exportDir}</code>
+                </p>
+              )}
+              {gd.exportStatus === 'done' && gd.prUrl && (
+                <p className="inspector__hint" style={{ color: '#34d399', fontSize: '0.8rem', margin: '0.25rem 0' }}>
+                  PR: <code>{gd.prUrl}</code>
+                </p>
+              )}
+              {gd.exportStatus === 'error' && gd.exportError && (
+                <p className="inspector__hint" style={{ color: '#f87171', fontSize: '0.8rem', margin: '0.5rem 0' }}>
+                  ✘ {gd.exportError}
+                </p>
+              )}
+
+              <p className="inspector__hint" style={{ fontSize: '0.75rem', opacity: 0.65, margin: '0.4rem 0' }}>
+                Export runs automatically at the end of each pipeline run.
+                Use the button below to re-export after the pipeline has already been trained.
+              </p>
+
+              <button
+                className="btn btn--run"
+                style={{ marginTop: 8 }}
+                disabled={gd.exportStatus === 'exporting'}
+                onClick={() => useStore.getState().gramExport(selectedNodeId)}
+              >
+                {gd.exportStatus === 'exporting' ? '⏳ Exporting…' : '🏆 Export to GRaM'}
+              </button>
+            </>
+          );
+        })()}
+
+        {/* ── Code Exporter ─────────────────────────────────────────────── */}
+        {data.category === 'code_exporter' && (() => {
+          const expData = data as import('../types').CodeExporterNodeData;
+          return (
+            <>
+              <div className="inspector__section-title">Export Settings</div>
+              <label className="inspector__field">
+                <span>Output Filename</span>
+                <input
+                  type="text"
+                  value={expData.outputFilename ?? 'train.py'}
+                  onChange={(e) =>
+                    updateNodeData(selectedNodeId, {
+                      outputFilename: e.target.value || 'train.py',
+                    } as Partial<import('../types').SurroNodeData>)
+                  }
+                />
+              </label>
+              {expData.exportStatus === 'done' && expData.exportPath && (
+                <p className="inspector__hint" style={{ color: '#a78bfa', fontSize: '0.8rem', margin: '0.5rem 0' }}>
+                  ✔ Exported to: <code>{expData.exportPath}</code>
+                </p>
+              )}
+              {expData.exportStatus === 'error' && expData.exportError && (
+                <p className="inspector__hint" style={{ color: '#f87171', fontSize: '0.8rem', margin: '0.5rem 0' }}>
+                  ✘ {expData.exportError}
+                </p>
+              )}
+              <button
+                className="btn btn--run"
+                style={{ marginTop: 12 }}
+                disabled={expData.exportStatus === 'exporting'}
+                onClick={() => useStore.getState().exportCode(selectedNodeId)}
+              >
+                {expData.exportStatus === 'exporting' ? '⏳ Exporting…' : '📄 Export train.py'}
+              </button>
+            </>
+          );
+        })()}
       </div>
 
       <div className="inspector__actions">

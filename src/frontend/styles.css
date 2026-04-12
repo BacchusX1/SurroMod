@@ -127,6 +127,32 @@ body,
   background: #15803d;
 }
 
+.app__btn--stop {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+
+.app__btn--stop:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+.app__btn--stop:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.app__btn--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.app__btn--active:hover {
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
 .app__btn--debug {
   background: var(--surface-2);
 }
@@ -454,6 +480,52 @@ body,
   height: 10px !important;
   background: var(--accent) !important;
   border: 2px solid var(--surface) !important;
+}
+
+/* Port label shown next to named handles on hover */
+.surro-handle[title]::after {
+  content: attr(title);
+  position: absolute;
+  font-size: 0.55rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+/* Show labels when the global toggle is active */
+.show-connection-labels .surro-handle[title]::after {
+  opacity: 0.8;
+}
+
+/* Position labels: right-side handles → label right of handle, outside node */
+.surro-handle[title].react-flow__handle-right::after {
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* Position labels: left-side handles → label left of handle, outside node */
+.surro-handle[title].react-flow__handle-left::after {
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* Position labels: top handles → label above handle, outside node */
+.surro-handle[title].react-flow__handle-top::after {
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* Position labels: bottom handles → label below handle, outside node */
+.surro-handle[title].react-flow__handle-bottom::after {
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 /* ─── Resize Handle (between canvas and inspector) ───────────────────────── */
@@ -948,6 +1020,22 @@ body,
   background: #dc2626;
 }
 
+.btn--run {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #fff;
+  width: 100%;
+}
+
+.btn--run:hover:not(:disabled) {
+  background: #15803d;
+}
+
+.btn--run:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ─── Settings Modal ─────────────────────────────────────────────────────── */
 
 .settings-overlay {
@@ -1039,8 +1127,56 @@ body,
   transition: border-color 0.15s;
 }
 
+.settings-modal__field input {
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: var(--font);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.settings-modal__field input:focus,
 .settings-modal__field select:focus {
   border-color: var(--accent);
+}
+
+.settings-modal__control-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-modal__seed-input {
+  width: 180px;
+}
+
+.settings-modal__clear-seed {
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.settings-modal__clear-seed:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.settings-modal__hint {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+  margin-top: -8px;
 }
 
 /* ─── React Flow overrides ───────────────────────────────────────────────── */
@@ -1263,6 +1399,11 @@ body,
 .hpnode-status--done {
   background: rgba(45, 212, 191, 0.2);
   color: #2dd4bf;
+}
+
+.hpnode-status--stopped {
+  background: rgba(148, 163, 184, 0.24);
+  color: #cbd5e1;
 }
 
 .hpnode-status--error {

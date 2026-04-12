@@ -6,14 +6,26 @@ export default function RegressorNode({ data, selected }: NodeProps) {
   const d = data as unknown as RegressorNodeData;
   const accent = categoryColor.regressor;
   const role = d.role ?? 'final';
+  const isGFF = d.model === 'GraphFlowForecaster';
 
   // Show a few key hyperparams on the node face
   const hp = d.hyperparams;
-  const preview = Object.entries(hp)
-    .filter(([k]) => k !== 'output_dim' && k !== 'lambda_kernel' && k !== 'lambda_residual')
-    .slice(0, 2)
-    .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
-    .join(' · ');
+  const preview = isGFF
+    ? `latent: ${hp.latent_dim ?? '?'}  layers: ${hp.num_message_passing_layers ?? '?'}  ${hp.aggregation_mode ?? 'mean'}`
+    : Object.entries(hp)
+        .filter(([k]) => k !== 'output_dim' && k !== 'lambda_kernel' && k !== 'lambda_residual')
+        .slice(0, 2)
+        .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
+        .join(' · ');
+
+  // GraphFlowForecaster has custom input ports to show the branched architecture
+  const gffInputPorts = isGFF
+    ? [
+        { id: 'features', label: 'features' },
+        { id: 'graph', label: 'graph' },
+        { id: 'data', label: 'data' },
+      ]
+    : [];
 
   return (
     <div
@@ -21,7 +33,6 @@ export default function RegressorNode({ data, selected }: NodeProps) {
       style={{ borderColor: accent }}
     >
       <div className="surro-node__header" style={{ background: accent }}>
-        <span className="surro-node__icon">📈</span>
         <span className="surro-node__title">{d.label}</span>
         {role === 'transform' && (
           <span className="surro-node__role-badge" title="Transform (pass-through)">T</span>
@@ -34,8 +45,22 @@ export default function RegressorNode({ data, selected }: NodeProps) {
         )}
         {preview && <span className="surro-node__detail">{preview}</span>}
       </div>
-      <Handle type="target" position={Position.Left} className="surro-handle" />
-      <Handle type="source" position={Position.Right} className="surro-handle" />
+      {isGFF ? (
+        gffInputPorts.map((port, i) => (
+          <Handle
+            key={`in-${port.id}`}
+            type="target"
+            position={Position.Left}
+            id={port.id}
+            className="surro-handle"
+            style={{ top: `${((i + 1) / (gffInputPorts.length + 1)) * 100}%` }}
+            title={port.label}
+          />
+        ))
+      ) : (
+        <Handle type="target" position={Position.Left} className="surro-handle" title="in" />
+      )}
+      <Handle type="source" position={Position.Right} className="surro-handle" title="out" />
     </div>
   );
 }

@@ -25,9 +25,10 @@ MANIFEST
 prompts.txt
 NYC.csv
 uploads/
-workflows/
 proj_dir/
 data/
+.claude/
+.vscode/
 
 # Virtual Environments
 venv/

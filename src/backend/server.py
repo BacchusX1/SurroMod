@@ -21,6 +21,7 @@ import queue
 import re
 import shutil
 import sys
+import threading
 import traceback
 import uuid
 from pathlib import Path
@@ -134,6 +135,30 @@ _ensure_gui_file_logger()
 
 logger = logging.getLogger(__name__)
 
+# ── Agent-based tuning cancellation registry ─────────────────────────────
+
+_hp_tuning_stop_lock = threading.Lock()
+_hp_tuning_stop_flags: set[str] = set()
+
+
+def _hp_tuning_job_key(canvas_id: str | None, tuner_node_id: str) -> str:
+    return f"{_sanitize_canvas_segment(canvas_id)}::{_sanitize_canvas_segment(tuner_node_id)}"
+
+
+def _request_hp_tuning_stop(job_key: str) -> None:
+    with _hp_tuning_stop_lock:
+        _hp_tuning_stop_flags.add(job_key)
+
+
+def _clear_hp_tuning_stop(job_key: str) -> None:
+    with _hp_tuning_stop_lock:
+        _hp_tuning_stop_flags.discard(job_key)
+
+
+def _is_hp_tuning_stop_requested(job_key: str) -> bool:
+    with _hp_tuning_stop_lock:
+        return job_key in _hp_tuning_stop_flags
+
 # ── App ───────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="SurroMod Backend", version="0.1.0")
@@ -187,6 +212,9 @@ def pipeline_run(req: PipelineRequest) -> dict[str, Any]:
     """Execute a pipeline graph and return per-node results."""
     try:
         result = run_pipeline(req.nodes, req.edges, seed=req.seed)
+        # Cache per-node results so gram_exporter re-export can access the
+        # trained model_artifact without re-running the whole pipeline.
+        app.state.last_run_results = result.get("node_results", {})
         return {"ok": True, **result}
     except Exception as exc:
         logger.error("Pipeline error:\n%s", traceback.format_exc())
@@ -465,6 +493,11 @@ class HPTunerAgentRunRequest(BaseModel):
     data_info: dict[str, Any] | None = None
 
 
+class HPTunerAgentStopRequest(BaseModel):
+    tuner_node_id: str
+    canvas_id: str | None = None
+
+
 def _augment_data_info(raw_info: dict[str, Any] | None) -> dict[str, Any] | None:
     """
     Enrich the frontend-provided data_info with actual file statistics
@@ -566,20 +599,26 @@ def hp_tuner_agent_run(req: HPTunerAgentRunRequest) -> dict[str, Any]:
 
         # Augment data_info with actual file statistics
         data_info = _augment_data_info(req.data_info)
+        job_key = _hp_tuning_job_key(req.canvas_id, req.tuner_node_id)
+        _clear_hp_tuning_stop(job_key)
 
-        result = tuner.run(
-            nodes=req.nodes,
-            edges=req.edges,
-            predictor_node_id=req.predictor_node_id,
-            selected_params=req.selected_params,
-            n_iterations=req.n_iterations,
-            exploration_rate=req.exploration_rate,
-            scoring_metric=req.scoring_metric,
-            metric_source=req.metric_source,
-            seed=req.seed,
-            data_info=data_info,
-            prompt_dump_dir=str(prompt_dump_dir),
-        )
+        try:
+            result = tuner.run(
+                nodes=req.nodes,
+                edges=req.edges,
+                predictor_node_id=req.predictor_node_id,
+                selected_params=req.selected_params,
+                n_iterations=req.n_iterations,
+                exploration_rate=req.exploration_rate,
+                scoring_metric=req.scoring_metric,
+                metric_source=req.metric_source,
+                seed=req.seed,
+                data_info=data_info,
+                prompt_dump_dir=str(prompt_dump_dir),
+                stop_requested=lambda: _is_hp_tuning_stop_requested(job_key),
+            )
+        finally:
+            _clear_hp_tuning_stop(job_key)
 
         return {"ok": True, **result}
     except Exception as exc:
@@ -590,7 +629,127 @@ def hp_tuner_agent_run(req: HPTunerAgentRunRequest) -> dict[str, Any]:
         )
 
 
+@app.post("/api/hp-tuner/agent/stop")
+def hp_tuner_agent_stop(req: HPTunerAgentStopRequest) -> dict[str, Any]:
+    """Request cancellation of an active agent-based HP tuning job."""
+    job_key = _hp_tuning_job_key(req.canvas_id, req.tuner_node_id)
+    _request_hp_tuning_stop(job_key)
+    logger.info("HP Tuner: stop requested for job %s", job_key)
+    return {"ok": True}
+
+
 # ── CLI entry point ──────────────────────────────────────────────────────
+
+# ── Pipeline Code Export ──────────────────────────────────────────────────
+
+OUTPUTS_DIR = ROOT / "proj_dir" / "outputs"
+OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+class PipelineExportRequest(BaseModel):
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    exporter_node_id: str
+    output_filename: str = "train.py"
+
+
+@app.post("/api/pipeline/export")
+def pipeline_export(req: PipelineExportRequest) -> dict[str, Any]:
+    """
+    Generate a standalone train.py from the current pipeline graph and
+    save it to proj_dir/outputs/.
+    """
+    try:
+        from src.backend.code_generator import generate_train_script
+
+        # Sanitise the requested filename
+        safe_name = "".join(
+            c if c.isalnum() or c in "-_." else "_"
+            for c in req.output_filename
+        ).strip() or "train.py"
+        if not safe_name.endswith(".py"):
+            safe_name += ".py"
+
+        script = generate_train_script(
+            nodes=req.nodes,
+            edges=req.edges,
+            exporter_node_id=req.exporter_node_id,
+            output_dir="proj_dir/outputs",
+        )
+
+        dest = OUTPUTS_DIR / safe_name
+        dest.write_text(script, encoding="utf-8")
+
+        logger.info("Pipeline exported to %s", dest)
+        return {"ok": True, "output_path": str(dest.relative_to(ROOT))}
+
+    except Exception as exc:
+        logger.error("Pipeline export error:\n%s", traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(exc)},
+        )
+
+
+class GRAMExportRequest(BaseModel):
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    exporter_node_id: str
+
+
+@app.post("/api/pipeline/gram-export")
+def pipeline_gram_export(req: GRAMExportRequest) -> dict[str, Any]:
+    """
+    Trigger a GRaM submission export for the given gram_exporter node.
+    Loads the last pipeline result for that node from the in-memory run cache
+    (populated by /api/pipeline/run) and re-executes only the export step.
+    """
+    try:
+        # Find the exporter node data
+        exporter_nd = next(
+            (n for n in req.nodes if n["id"] == req.exporter_node_id), None
+        )
+        if exporter_nd is None:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "Node not found"})
+
+        nd_data = exporter_nd.get("data", exporter_nd)
+
+        # Collect upstream results from the last pipeline run cache
+        last_run: dict = app.state.__dict__.get("last_run_results", {})
+        upstream_inputs: dict[str, Any] = {}
+
+        node_map = {n["id"]: n for n in req.nodes}
+        for e in req.edges:
+            if e["target"] == req.exporter_node_id:
+                src_result = last_run.get(e["source"], {})
+                upstream_inputs.update(src_result)
+
+        if not upstream_inputs.get("model_artifact"):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "error": (
+                        "No trained model found. Run the full pipeline first, "
+                        "then use Export to GRaM."
+                    ),
+                },
+            )
+
+        from src.backend.inference.gram_exporter import GRAMExporter
+        exporter = GRAMExporter(nd_data.get("hyperparams", {}))
+        result = exporter.execute(upstream_inputs)
+
+        return {
+            "ok": True,
+            "export_dir": result.get("gram_export_dir"),
+            "pr_url": result.get("gram_pr_url"),
+        }
+
+    except Exception as exc:
+        logger.error("GRaM export error:\n%s", traceback.format_exc())
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -20,7 +20,10 @@ export type NodeCategory =
   | 'validator'
   | 'feature_engineering'
   | 'inference'
-  | 'hp_tuner';
+  | 'hp_tuner'
+  | 'postprocessing'
+  | 'code_exporter'
+  | 'gram_exporter';
 
 // ─── Model types ────────────────────────────────────────────────────────────
 
@@ -31,7 +34,8 @@ export type RegressorModel =
   | 'KRR'
   | 'Polynomial'
   | 'NeuralOperator'
-  | 'PINN';
+  | 'PINN'
+  | 'GraphFlowForecaster';
 
 export type ClassifierModel =
   | 'RandomForest'
@@ -41,19 +45,20 @@ export type ClassifierModel =
   | 'GradientBoosting'
   | 'LogisticRegression';
 
-export type FeatureEngineeringMethod = 'PCA' | 'GeometrySampler' | 'Scaler' | 'DataSplitter' | 'Autoencoder' | 'TrainTestSplit';
+export type FeatureEngineeringMethod = 'PCA' | 'GeometrySampler' | 'Scaler' | 'Autoencoder' | 'SpatialGraphBuilder' | 'SurfaceDistanceFeature' | 'TemporalStackFlatten' | 'PointFeatureFusion' | 'DatasetSplit' | 'FeatureNormalizer' | 'SpectralDecomposer' | 'HierarchicalGraphBuilder' | 'TemporalXLSTMEncoder';
 
 export type ScalerType = 'MinMax' | 'Standard' | 'LogTransform';
 
 export type HPTunerMethod = 'GridSearch' | 'AgentBased' | 'OptimiserBased';
 
-/** How the Data Splitter decomposes multi-dimensional data. */
-export type SplitMode =
-  | 'channel'        // (N,C,H,W) → C × (N,H,W)
-  | 'channel_x'      // (N,C,H,W) → C·W × (N,H)   — channel × x-slices
-  | 'channel_y'      // (N,C,H,W) → C·H × (N,W)   — channel × y-slices
-  | 'x'              // (N,C,H,W) → W × (N,C,H)    — x-slices only
-  | 'y';             // (N,C,H,W) → H × (N,C,W)    — y-slices only
+/** The data kind / mode for the unified DatasetSplit node. */
+export type DatasetSplitDataKind = 'scalar' | '3d_field';
+
+/** Format modes for 3D Field input nodes. */
+export type ThreeDFieldFormat = 'Temporal Point Cloud Field';
+
+/** Format modes for 3D Geometry input nodes. */
+export type ThreeDGeometryFormat = 'Point Cloud Surface Mask';
 
 // ─── Hyperparameters ────────────────────────────────────────────────────────
 
@@ -81,6 +86,8 @@ export interface InputNodeData extends Record<string, unknown> {
    * For H5:  { format: 'h5', groups: { ... } }
    */
   structure?: import('./api').DataStructure;
+  /** Hyperparameters for specialised input formats (e.g. format_mode, field toggles). */
+  hyperparams?: HyperParams;
 }
 
 export type RegressorRole = 'transform' | 'final';
@@ -104,9 +111,11 @@ export interface ClassifierNodeData extends Record<string, unknown> {
 export interface ValidatorNodeData extends Record<string, unknown> {
   label: string;
   category: 'validator';
-  validatorKind: 'classifier_validator' | 'regressor_validator' | 'relation_seeker';
+  validatorKind: 'classifier_validator' | 'regressor_validator' | 'relation_seeker' | 'flow_forecast_validator';
   /** Max number of true-vs-predicted plots per row (configurable layout) */
   plotsPerRow: number;
+  /** Hyperparameters for specialised validators (e.g. flow forecast). */
+  hyperparams?: HyperParams;
 }
 
 export interface FeatureEngineeringNodeData extends Record<string, unknown> {
@@ -121,6 +130,9 @@ export interface InferenceNodeData extends Record<string, unknown> {
   category: 'inference';
   modelSource: string;
   batchSize: number;
+  /** Specialised inference kind for flow pipelines. */
+  inferenceKind?: 'standard' | 'flow_model_inference';
+  hyperparams?: HyperParams;
 }
 
 /** Description of a single hyperparameter eligible for agent-based tuning. */
@@ -166,7 +178,7 @@ export interface HPTunerNodeData extends Record<string, unknown> {
   /** Hyperparameters loadable from the connected predictor. */
   tunableParams?: HPTuneParam[];
   /** Current tuning status for UI feedback. */
-  tuningStatus?: 'idle' | 'loading-hps' | 'running' | 'done' | 'error';
+  tuningStatus?: 'idle' | 'loading-hps' | 'running' | 'done' | 'error' | 'stopped';
   /** Full iteration history. */
   tuningResults?: HPTuningIterationResult[];
   /** Best HP config found. */
@@ -189,6 +201,48 @@ export interface RBLAggregatorNodeData extends Record<string, unknown> {
   category: 'rbl_aggregator';
 }
 
+export type PostprocessingKind =
+  | 'field_slice_plot'
+  | 'flow_metrics_summary'
+  | 'prediction_comparison_report';
+
+export interface PostprocessingNodeData extends Record<string, unknown> {
+  label: string;
+  category: 'postprocessing';
+  postprocessingKind: PostprocessingKind;
+  hyperparams: HyperParams;
+}
+
+export interface CodeExporterNodeData extends Record<string, unknown> {
+  label: string;
+  category: 'code_exporter';
+  /** Status of the last export attempt */
+  exportStatus?: 'idle' | 'exporting' | 'done' | 'error';
+  /** Path of the last exported file */
+  exportPath?: string;
+  /** Error message if export failed */
+  exportError?: string;
+  /** Optional output filename override */
+  outputFilename?: string;
+}
+
+export interface GRAMExporterNodeData extends Record<string, unknown> {
+  label: string;
+  category: 'gram_exporter';
+  hyperparams: {
+    gram_repo_dir: string;
+    model_name: string;
+    team_name: string;
+    create_pr: boolean;
+    auto_push: boolean;
+    github_token: string;
+  };
+  exportStatus?: 'idle' | 'exporting' | 'done' | 'error';
+  exportDir?: string;
+  prUrl?: string;
+  exportError?: string;
+}
+
 export type SurroNodeData =
   | InputNodeData
   | RegressorNodeData
@@ -198,7 +252,10 @@ export type SurroNodeData =
   | InferenceNodeData
   | HPTunerNodeData
   | RBLNodeData
-  | RBLAggregatorNodeData;
+  | RBLAggregatorNodeData
+  | PostprocessingNodeData
+  | CodeExporterNodeData
+  | GRAMExporterNodeData;
 
 // ─── Typed aliases for React Flow ───────────────────────────────────────────
 
@@ -211,6 +268,8 @@ export interface PaletteItem {
   category: NodeCategory;
   label: string;
   defaultData: SurroNodeData;
+  /** When false, item is greyed out in the sidebar and cannot be dragged onto the canvas */
+  implemented?: boolean;
 }
 
 // ─── Tabs ───────────────────────────────────────────────────────────────────

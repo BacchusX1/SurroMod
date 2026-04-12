@@ -157,6 +157,8 @@ def _merge_upstream_outputs(
     merged: dict[str, Any] = {}
     x_arrays: list[np.ndarray] = []
     feature_name_lists: list[list[str]] = []
+    fe_pipeline_combined: list[Any] = []
+    graph_cache_combined: dict[str, Any] = {}
 
     for up in upstream_dicts:
         for key, value in up.items():
@@ -164,8 +166,20 @@ def _merge_upstream_outputs(
                 x_arrays.append(value)
             elif key == "feature_names" and isinstance(value, list):
                 feature_name_lists.append(value)
+            elif key == "fe_pipeline" and isinstance(value, list):
+                for step in value:
+                    if step not in fe_pipeline_combined:
+                        fe_pipeline_combined.append(step)
+            elif key == "graph_cache" and isinstance(value, dict):
+                graph_cache_combined.update(value)
             else:
                 merged[key] = value
+
+    # ── fe_pipeline & graph_cache merging ────────────────────────────────
+    if fe_pipeline_combined:
+        merged["fe_pipeline"] = fe_pipeline_combined
+    if graph_cache_combined:
+        merged["graph_cache"] = graph_cache_combined
 
     # ── X concatenation ──────────────────────────────────────────────────
     if len(x_arrays) > 1:
@@ -281,20 +295,20 @@ def _build_executor(node_data: dict[str, Any], seed: int | None = None) -> Any:
         if input_kind == "2d_geometry":
             from src.backend.data_digester.geometry_2d_digester import Geometry2DDigester
             return Geometry2DDigester(node_data)
-        # Future digesters:
-        # if input_kind == "time_series":
-        #     from src.backend.data_digester.time_series_digester import TimeSeriesDigester
-        #     return TimeSeriesDigester(node_data)
-        # if input_kind == "3d_field":
-        #     from src.backend.data_digester.three_d_data_digester import ThreeDFieldDigester
-        #     return ThreeDFieldDigester(node_data)
-        # if input_kind == "3d_geometry":
-        #     from src.backend.data_digester.geometry_3d_digester import Geometry3DDigester
-        #     return Geometry3DDigester(node_data)
+        if input_kind == "3d_field":
+            format_mode = node_data.get("hyperparams", {}).get("format_mode", "")
+            if format_mode == "Temporal Point Cloud Field":
+                from src.backend.data_digester.temporal_point_cloud_field_digester import TemporalPointCloudFieldDigester
+                return TemporalPointCloudFieldDigester(node_data)
+            from src.backend.data_digester.three_d_data_digester import ThreeDFieldDigester
+            return ThreeDFieldDigester(node_data)
+        if input_kind == "3d_geometry":
+            from src.backend.data_digester.geometry_3d_digester import Geometry3DDigester
+            return Geometry3DDigester(node_data)
         raise ValueError(f"Unsupported input kind: {input_kind}")
 
     if category == "feature_engineering":
-        method = node_data.get("method")
+        method = node_data.get("method") or node_data.get("feMethod")
         hp = node_data.get("hyperparams", {})
 
         if method == "Scaler":
@@ -317,10 +331,49 @@ def _build_executor(node_data: dict[str, Any], seed: int | None = None) -> Any:
             from src.backend.feature_engineering.train_test_splitter import TrainTestSplitter
             return TrainTestSplitter(hp, seed=seed)
 
-        # Other FE methods can be added here
+        if method == "SpatialGraphBuilder":
+            from src.backend.feature_engineering.spatial_graph_builder import SpatialGraphBuilder
+            return SpatialGraphBuilder(hp, seed=seed)
+
+        if method == "SurfaceDistanceFeature":
+            from src.backend.feature_engineering.surface_distance_feature import SurfaceDistanceFeature
+            return SurfaceDistanceFeature(hp, seed=seed)
+
+        if method == "TemporalStackFlatten":
+            from src.backend.feature_engineering.temporal_stack_flatten import TemporalStackFlatten
+            return TemporalStackFlatten(hp, seed=seed)
+
+        if method == "PointFeatureFusion":
+            from src.backend.feature_engineering.point_feature_fusion import PointFeatureFusion
+            return PointFeatureFusion(hp, seed=seed)
+
+        if method == "DatasetSplit":
+            from src.backend.feature_engineering.dataset_split import DatasetSplit
+            return DatasetSplit(hp, seed=seed)
+
+        if method == "FeatureNormalizer":
+            from src.backend.feature_engineering.feature_normalizer import FeatureNormalizer
+            return FeatureNormalizer(hp, seed=seed)
+
+        if method == "SpectralDecomposer":
+            from src.backend.feature_engineering.spectral_decomposer import SpectralDecomposer
+            return SpectralDecomposer(hp, seed=seed)
+
+        if method == "HierarchicalGraphBuilder":
+            from src.backend.feature_engineering.hierarchical_graph_builder import HierarchicalGraphBuilder
+            return HierarchicalGraphBuilder(hp, seed=seed)
+
+        if method == "TemporalXLSTMEncoder":
+            from src.backend.feature_engineering.temporal_xlstm_encoder import TemporalXLSTMEncoder
+            return TemporalXLSTMEncoder(hp, seed=seed)
+
         raise ValueError(f"Unsupported FE method: {method}")
 
     if category == "regressor":
+        model = node_data.get("model", "")
+        if model == "GraphFlowForecaster":
+            from src.backend.predictors.regressors.graph_flow_forecaster import GraphFlowForecaster
+            return GraphFlowForecaster(node_data.get("hyperparams", {}), seed=seed)
         from src.backend.predictors.model_base import ModelBase
         # Ensure all regressor subclasses are registered
         import src.backend.predictors.regressors.mlp  # noqa: F401
@@ -342,7 +395,36 @@ def _build_executor(node_data: dict[str, Any], seed: int | None = None) -> Any:
         if kind == "regressor_validator":
             from src.backend.analyzers.regressor_validator import RegressorValidator
             return RegressorValidator(node_data)
+        if kind == "flow_forecast_validator":
+            from src.backend.postprocessing.flow_forecast_validator import FlowForecastValidator
+            return FlowForecastValidator(node_data.get("hyperparams", {}))
         raise ValueError(f"Unsupported validator kind: {kind}")
+
+    if category == "inference":
+        inf_kind = node_data.get("inferenceKind", "")
+        if inf_kind == "flow_model_inference":
+            from src.backend.inference.flow_model_inference import FlowModelInference
+            return FlowModelInference(node_data.get("hyperparams", {}))
+        from src.backend.inference.model_inference import Inference
+        return Inference(batch_size=int(node_data.get("batchSize", 1)))
+
+    if category == "postprocessing":
+        pp_kind = node_data.get("postprocessingKind", "")
+        hp = node_data.get("hyperparams", {})
+        if pp_kind == "field_slice_plot":
+            from src.backend.postprocessing.field_slice_plot import FieldSlicePlot
+            return FieldSlicePlot(hp)
+        if pp_kind == "flow_metrics_summary":
+            from src.backend.postprocessing.flow_metrics_summary import FlowMetricsSummary
+            return FlowMetricsSummary(hp)
+        if pp_kind == "prediction_comparison_report":
+            from src.backend.postprocessing.prediction_comparison_report import PredictionComparisonReport
+            return PredictionComparisonReport(hp)
+        raise ValueError(f"Unsupported postprocessing kind: {pp_kind}")
+
+    if category == "gram_exporter":
+        from src.backend.inference.gram_exporter import GRAMExporter
+        return GRAMExporter(node_data.get("hyperparams", {}))
 
     raise ValueError(f"Unsupported node category: {category}")
 
@@ -398,7 +480,7 @@ def run_pipeline(
         data = nd.get("data", nd)
         category = data.get("category")
 
-        if category in ("regressor", "validator", "rbl", "rbl_aggregator", "hp_tuner"):
+        if category in ("regressor", "validator", "rbl", "rbl_aggregator", "hp_tuner", "inference", "postprocessing"):
             continue  # handled in later phases or externally (hp_tuner)
 
         logger.info("Pipeline: executing node '%s' (%s)", nid, category)
@@ -432,6 +514,14 @@ def run_pipeline(
 
     trainer = BranchTrainer(nodes, edges, node_map, outputs, executors)
     branches = trainer.detect_branches()
+
+    # Exclude GraphFlowForecaster branches — they bypass X/y-based branch
+    # training and are handled standalone via their own execute() method.
+    branches = [
+        b for b in branches
+        if node_map[b.final_regressor].get("data", node_map[b.final_regressor])
+        .get("model") != "GraphFlowForecaster"
+    ]
 
     # Track which nodes are part of a branch (to avoid double-processing)
     branched_nodes: set[str] = set()
@@ -616,6 +706,29 @@ def run_pipeline(
         nd = node_map[nid]
         data = nd.get("data", nd)
         if data.get("category") == "regressor" and nid not in branched_nodes:
+            model_name = data.get("model", "")
+
+            if model_name == "GraphFlowForecaster":
+                # GraphFlowForecaster uses its own execute() interface
+                logger.info("Pipeline: training GraphFlowForecaster '%s' standalone.", nid)
+                executor = executors.get(nid) or _build_executor(data, seed=seed)
+
+                up_ids = upstream.get(nid, [])
+                upstream_dicts = [
+                    outputs[uid]
+                    for uid in up_ids
+                    if uid in outputs and isinstance(outputs[uid], dict)
+                ]
+                merged_inputs = _merge_upstream_outputs(upstream_dicts)
+
+                out = executor.execute(merged_inputs)
+                outputs[nid] = out
+                results[nid] = {
+                    "metrics": out.get("metrics"),
+                    "is_trained": True,
+                }
+                continue
+
             logger.warning("Regressor '%s' is not part of any branch — training standalone.", nid)
             executor = executors.get(nid) or _build_executor(data, seed=seed)
 
@@ -651,7 +764,31 @@ def run_pipeline(
                 "is_trained": True,
             }
 
-    # ── Phase 3: Execute validator nodes ─────────────────────────────────
+    # ── Phase 3: Execute inference nodes ────────────────────────────────
+    for nid in order:
+        nd = node_map[nid]
+        data = nd.get("data", nd)
+        category = data.get("category")
+
+        if category != "inference":
+            continue
+
+        logger.info("Pipeline: executing inference node '%s'", nid)
+
+        up_ids = upstream.get(nid, [])
+        upstream_dicts = [
+            outputs[uid]
+            for uid in up_ids
+            if uid in outputs and isinstance(outputs[uid], dict)
+        ]
+        merged_inputs = _merge_upstream_outputs(upstream_dicts)
+
+        executor = _build_executor(data, seed=seed)
+        out = executor.execute(merged_inputs)
+        outputs[nid] = out
+        results[nid] = {"status": "ok"}
+
+    # ── Phase 4: Execute validator nodes ─────────────────────────────────
     for nid in order:
         nd = node_map[nid]
         data = nd.get("data", nd)
@@ -662,17 +799,82 @@ def run_pipeline(
 
         logger.info("Pipeline: executing node '%s' (%s)", nid, category)
 
+        validator_kind = data.get("validatorKind", "")
         up_ids = upstream.get(nid, [])
-        merged_inputs, _ = _collect_model_entries(
-            up_ids, outputs, node_map,
-        )
-        if not merged_inputs:
-            raise ValueError(
-                f"Validator node '{nid}' has no upstream model outputs."
+
+        if validator_kind == "flow_forecast_validator":
+            # Flow validators receive merged upstream outputs directly
+            # (not model entries) — they work with predicted_velocity_out
+            # and velocity_out or with multi-sample metrics.
+            upstream_dicts = [
+                outputs[uid]
+                for uid in up_ids
+                if uid in outputs and isinstance(outputs[uid], dict)
+            ]
+            merged_inputs = _merge_upstream_outputs(upstream_dicts)
+        else:
+            merged_inputs, _ = _collect_model_entries(
+                up_ids, outputs, node_map,
             )
+            if not merged_inputs:
+                raise ValueError(
+                    f"Validator node '{nid}' has no upstream model outputs."
+                )
 
         executor = _build_executor(data, seed=seed)
         out = executor.execute(merged_inputs)
+        outputs[nid] = out
+        results[nid] = out
+
+    # ── Phase 5: Execute postprocessing nodes ────────────────────────────
+    for nid in order:
+        nd = node_map[nid]
+        data = nd.get("data", nd)
+        category = data.get("category")
+
+        if category != "postprocessing":
+            continue
+
+        logger.info("Pipeline: executing postprocessing node '%s'", nid)
+
+        up_ids = upstream.get(nid, [])
+        upstream_dicts = [
+            outputs[uid]
+            for uid in up_ids
+            if uid in outputs and isinstance(outputs[uid], dict)
+        ]
+        merged_inputs = _merge_upstream_outputs(upstream_dicts)
+
+        executor = _build_executor(data, seed=seed)
+        out = executor.execute(merged_inputs)
+        outputs[nid] = out
+        results[nid] = out
+
+    # ── Phase 6: Execute GRaM exporter nodes ─────────────────────────────
+    for nid in order:
+        nd = node_map[nid]
+        data = nd.get("data", nd)
+        category = data.get("category")
+
+        if category != "gram_exporter":
+            continue
+
+        logger.info("Pipeline: executing gram_exporter node '%s'", nid)
+
+        up_ids = upstream.get(nid, [])
+        upstream_dicts = [
+            outputs[uid]
+            for uid in up_ids
+            if uid in outputs and isinstance(outputs[uid], dict)
+        ]
+        merged_inputs = _merge_upstream_outputs(upstream_dicts)
+
+        executor = _build_executor(data, seed=seed)
+        try:
+            out = executor.execute(merged_inputs)
+        except Exception as exc:
+            logger.error("GRAMExporter node '%s' failed: %s", nid, exc, exc_info=True)
+            out = {"gram_export_status": "error", "gram_export_error": str(exc)}
         outputs[nid] = out
         results[nid] = out
 

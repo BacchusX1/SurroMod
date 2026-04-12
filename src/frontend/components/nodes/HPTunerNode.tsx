@@ -2,12 +2,6 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { HPTunerNodeData } from '../../types';
 import { categoryColor } from '../../utils';
 
-const methodIcon: Record<string, string> = {
-  GridSearch: '🔍',
-  AgentBased: '🤖',
-  OptimiserBased: '⚙️',
-};
-
 export default function HPTunerNode({ data, selected }: NodeProps) {
   const d = data as unknown as HPTunerNodeData;
   const accent = categoryColor.hp_tuner;
@@ -22,11 +16,13 @@ export default function HPTunerNode({ data, selected }: NodeProps) {
   const statusBadge = (() => {
     switch (d.tuningStatus) {
       case 'running':
-        return <span className="hpnode-status hpnode-status--running">⏳ Running…</span>;
+        return <span className="hpnode-status hpnode-status--running">Running…</span>;
       case 'done':
-        return <span className="hpnode-status hpnode-status--done">✓ Done</span>;
+        return <span className="hpnode-status hpnode-status--done">Done</span>;
+      case 'stopped':
+        return <span className="hpnode-status hpnode-status--stopped">Stopped</span>;
       case 'error':
-        return <span className="hpnode-status hpnode-status--error">✗ Error</span>;
+        return <span className="hpnode-status hpnode-status--error">Error</span>;
       default:
         return null;
     }
@@ -38,7 +34,6 @@ export default function HPTunerNode({ data, selected }: NodeProps) {
       style={{ borderColor: accent }}
     >
       <div className="surro-node__header" style={{ background: accent }}>
-        <span className="surro-node__icon">{methodIcon[d.method] ?? '🎯'}</span>
         <span className="surro-node__title">{d.label}</span>
         {statusBadge}
       </div>
@@ -53,8 +48,8 @@ export default function HPTunerNode({ data, selected }: NodeProps) {
         )}
       </div>
 
-      <Handle type="target" position={Position.Left} className="surro-handle" />
-      <Handle type="source" position={Position.Right} className="surro-handle" />
+      <Handle type="target" position={Position.Left} className="surro-handle" title="predictor" />
+      <Handle type="source" position={Position.Right} className="surro-handle" title="tuned" />
     </div>
   );
 }

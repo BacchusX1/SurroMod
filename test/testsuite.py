@@ -309,6 +309,84 @@ def test_workflow_r2(workflow_file: str, config: dict[str, Any]) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# 3D Flow Prediction workflow tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _flow_prediction_ids() -> list[str]:
+    """Return workflow filenames listed under flow_prediction_workflows."""
+    cfg = _load_config()
+    return list(cfg.get("flow_prediction_workflows", {}).keys())
+
+
+@pytest.mark.parametrize("workflow_file", _flow_prediction_ids())
+def test_workflow_flow_prediction(workflow_file: str, config: dict[str, Any]) -> None:
+    """
+    End-to-end test for a 3D flow prediction workflow:
+
+    1. Load the workflow pickle.
+    2. Run the pipeline.
+    3. Verify the regressor node was trained successfully.
+    4. Assert R² targets for train and test splits.
+    """
+    wf_config = config["flow_prediction_workflows"][workflow_file]
+    min_r2_train = wf_config.get("min_r2_train")
+    min_r2_test = wf_config.get("min_r2_test")
+
+    # ── 1. Load workflow ─────────────────────────────────────────────────
+    bundle = _load_workflow(workflow_file)
+    nodes = bundle["nodes"]
+    edges = bundle["edges"]
+
+    # ── 2. Execute the pipeline ──────────────────────────────────────────
+    result = run_pipeline(nodes, edges, seed=42)
+    assert result is not None, "run_pipeline returned None"
+
+    node_results: dict[str, Any] = result.get("node_results", {})
+    assert node_results, "Pipeline produced no node results"
+
+    # ── 3. Find the regressor and verify training ────────────────────────
+    regressor_found = False
+    for nd in nodes:
+        data = nd.get("data", nd)
+        if data.get("category") == "regressor":
+            nid = nd["id"]
+            assert nid in node_results, (
+                f"Regressor node '{nid}' missing from results"
+            )
+            nr = node_results[nid]
+            assert nr.get("is_trained"), (
+                f"Regressor node '{nid}' was not trained"
+            )
+            regressor_found = True
+            label = data.get("label", data.get("model", nid))
+
+            # ── 4. Assert R² targets ─────────────────────────────────────
+            metrics = nr.get("metrics", {}) or {}
+            r2_train = metrics.get("r2_train")
+            r2_test = metrics.get("r2_test")
+
+            if min_r2_train is not None and r2_train is not None:
+                assert r2_train >= min_r2_train, (
+                    f"Workflow '{workflow_file}', {label}: "
+                    f"R²(train)={r2_train:.4f} < min {min_r2_train}"
+                )
+            if min_r2_test is not None and r2_test is not None:
+                assert r2_test >= min_r2_test, (
+                    f"Workflow '{workflow_file}', {label}: "
+                    f"R²(test)={r2_test:.4f} < min {min_r2_test}"
+                )
+
+            print(
+                f"  ✓ {workflow_file} / {label}: trained  "
+                f"R²(train)={r2_train}  R²(test)={r2_test}"
+            )
+
+    assert regressor_found, (
+        f"Workflow '{workflow_file}' contains no regressor node"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # LLM smoke tests (agent-based HP tuner)
 # ═══════════════════════════════════════════════════════════════════════════
 

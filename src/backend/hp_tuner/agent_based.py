@@ -37,6 +37,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
 
 import yaml
 
@@ -723,6 +724,7 @@ class AgentBasedTuner:
         seed: int | None = None,
         data_info: dict[str, Any] | None = None,
         prompt_dump_dir: str | None = None,
+        stop_requested: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """
         Execute agent-based hyperparameter search.
@@ -771,6 +773,7 @@ class AgentBasedTuner:
 
         maximize = _is_maximize(scoring_metric)
         history: list[dict[str, Any]] = []
+        stopped = False
 
         # Map temperature: exploration_rate 0→0.2, 0.5→0.7, 1→1.0
         base_temp = 0.2 + exploration_rate * 0.8
@@ -794,6 +797,14 @@ class AgentBasedTuner:
             )
 
         for iteration in range(1, n_iterations + 1):
+            if stop_requested is not None and stop_requested():
+                stopped = True
+                logger.info(
+                    "HP Tuner: stop requested before iteration %d; ending search.",
+                    iteration,
+                )
+                break
+
             # ── 1. Get HP suggestion ─────────────────────────────────────
             config: dict[str, Any] | None = None
             llm_retries = 3
@@ -909,12 +920,22 @@ class AgentBasedTuner:
 
         # ── Find best ────────────────────────────────────────────────────
         if not history:
+            if stopped:
+                logger.info("HP Tuner: stopped before first completed iteration.")
+                return {
+                    "history": [],
+                    "best_config": {p["key"]: p["currentValue"] for p in selected_params},
+                    "best_score": 0.0,
+                    "stopped": True,
+                }
+
             logger.error("HP Tuner: no iterations completed. Returning empty result.")
             return {
                 "history": [],
                 "best_config": {p["key"]: p["currentValue"] for p in selected_params},
                 "best_score": 0.0,
                 "error": "All iterations failed — no valid configs were produced.",
+                "stopped": False,
             }
 
         if maximize:
@@ -933,4 +954,5 @@ class AgentBasedTuner:
             "history": history,
             "best_config": best["config"],
             "best_score": best["score"],
+            "stopped": stopped,
         }

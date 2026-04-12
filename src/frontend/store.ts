@@ -37,6 +37,9 @@ const _redoStack: HistoryEntry[] = [];
 /** Whether a node drag is currently in progress (to avoid flooding the stack). */
 let _isDragging = false;
 
+/** AbortController for the currently running pipeline fetch. */
+let _pipelineAbortController: AbortController | null = null;
+
 /** Deep-clone the current canvas state into a history entry. */
 function _snapshot(state: { nodes: SurroNode[]; edges: SurroEdge[] }): HistoryEntry {
   return {
@@ -122,13 +125,20 @@ interface StoreState {
 
   // Pipeline actions
   runPipeline: () => Promise<void>;
+  stopEverything: () => Promise<void>;
   clearResults: () => void;
+  exportCode: (nodeId: string) => Promise<void>;
+  gramExport: (nodeId: string) => Promise<void>;
 
   // Output panel actions
   toggleOutputPanel: () => void;
   setOutputPanelHeight: (height: number) => void;
   addLogMessage: (msg: string) => void;
   clearLogs: () => void;
+
+  // Canvas display
+  showConnectionLabels: boolean;
+  toggleConnectionLabels: () => void;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -167,6 +177,8 @@ const useStore = create<StoreState>((set, get) => ({
   logMessages: [],
 
   clipboard: null,
+
+  showConnectionLabels: false,
 
   // ─── Tab actions ──────────────────────────────────────────────────────────
 
@@ -507,6 +519,8 @@ const useStore = create<StoreState>((set, get) => ({
     const state = get();
     set({ pipelineRunning: true, pipelineError: null, nodeResults: {} });
 
+    _pipelineAbortController = new AbortController();
+
     try {
       const payload = {
         nodes: state.nodes.map((n) => ({ id: n.id, type: n.type, data: n.data })),
@@ -518,6 +532,7 @@ const useStore = create<StoreState>((set, get) => ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        signal: _pipelineAbortController.signal,
       });
 
       const json = await res.json();
@@ -532,13 +547,159 @@ const useStore = create<StoreState>((set, get) => ({
         nodeResults: json.node_results ?? {},
       });
     } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        set({ pipelineRunning: false, pipelineError: null });
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       set({ pipelineRunning: false, pipelineError: msg });
+    } finally {
+      _pipelineAbortController = null;
     }
+  },
+
+  stopEverything: async () => {
+    // 1. Abort any in-flight pipeline fetch
+    if (_pipelineAbortController) {
+      _pipelineAbortController.abort();
+      _pipelineAbortController = null;
+    }
+    set({ pipelineRunning: false });
+
+    // 2. Stop any running HP tuner nodes
+    const { nodes, activeTabId } = get();
+    const runningTuners = nodes.filter(
+      (n) =>
+        n.data.category === 'hp_tuner' &&
+        (n.data as import('./types').HPTunerNodeData).tuningStatus === 'running',
+    );
+    await Promise.all(
+      runningTuners.map((n) =>
+        fetch('/api/hp-tuner/agent/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tuner_node_id: n.id, canvas_id: activeTabId }),
+        }).catch(() => {}),
+      ),
+    );
   },
 
   clearResults: () => {
     set({ nodeResults: {}, pipelineError: null });
+  },
+
+  exportCode: async (nodeId: string) => {
+    const state = get();
+
+    // Mark the exporter node as "exporting"
+    set({
+      nodes: state.nodes.map((n) =>
+        n.id === nodeId
+          ? { ...n, data: { ...n.data, exportStatus: 'exporting', exportError: undefined } as import('./types').SurroNodeData }
+          : n,
+      ),
+    });
+
+    try {
+      const currentState = get();
+      const payload = {
+        nodes: currentState.nodes.map((n) => ({ id: n.id, type: n.type, data: n.data })),
+        edges: currentState.edges.map((e) => ({ source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
+        exporter_node_id: nodeId,
+        output_filename: (currentState.nodes.find((n) => n.id === nodeId)?.data as import('./types').CodeExporterNodeData)?.outputFilename ?? 'train.py',
+      };
+
+      const res = await fetch('/api/pipeline/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json();
+
+      set({
+        nodes: get().nodes.map((n) =>
+          n.id === nodeId
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  exportStatus: json.ok ? 'done' : 'error',
+                  exportPath: json.ok ? json.output_path : undefined,
+                  exportError: json.ok ? undefined : (json.error ?? 'Export failed'),
+                } as import('./types').SurroNodeData,
+              }
+            : n,
+        ),
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      set({
+        nodes: get().nodes.map((n) =>
+          n.id === nodeId
+            ? { ...n, data: { ...n.data, exportStatus: 'error', exportError: msg } as import('./types').SurroNodeData }
+            : n,
+        ),
+      });
+    }
+  },
+
+  gramExport: async (nodeId: string) => {
+    const state = get();
+
+    set({
+      nodes: state.nodes.map((n) =>
+        n.id === nodeId
+          ? { ...n, data: { ...n.data, exportStatus: 'exporting', exportError: undefined } as import('./types').SurroNodeData }
+          : n,
+      ),
+    });
+
+    try {
+      const currentState = get();
+      const payload = {
+        nodes: currentState.nodes.map((n) => ({ id: n.id, type: n.type, data: n.data })),
+        edges: currentState.edges.map((e) => ({
+          source: e.source, target: e.target,
+          sourceHandle: e.sourceHandle, targetHandle: e.targetHandle,
+        })),
+        exporter_node_id: nodeId,
+      };
+
+      const res = await fetch('/api/pipeline/gram-export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json();
+
+      set({
+        nodes: get().nodes.map((n) =>
+          n.id === nodeId
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  exportStatus: json.ok ? 'done' : 'error',
+                  exportDir:  json.ok ? json.export_dir  : undefined,
+                  prUrl:      json.ok ? json.pr_url      : undefined,
+                  exportError: json.ok ? undefined : (json.error ?? 'GRaM export failed'),
+                } as import('./types').SurroNodeData,
+              }
+            : n,
+        ),
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      set({
+        nodes: get().nodes.map((n) =>
+          n.id === nodeId
+            ? { ...n, data: { ...n.data, exportStatus: 'error', exportError: msg } as import('./types').SurroNodeData }
+            : n,
+        ),
+      });
+    }
   },
 
   // ── Output panel actions ───────────────────────────────────────────────
@@ -562,6 +723,10 @@ const useStore = create<StoreState>((set, get) => ({
 
   clearLogs: () => {
     set({ logMessages: [] });
+  },
+
+  toggleConnectionLabels: () => {
+    set({ showConnectionLabels: !get().showConnectionLabels });
   },
 }));
 
