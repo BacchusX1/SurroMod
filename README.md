@@ -8,25 +8,23 @@
 
 # SurroMod — Visual Surrogate Model Builder
 
-Visual workflow builder for surrogate models. Drag-and-drop ML pipelines on a canvas — regressors, feature engineering, HP tuning, postprocessing, GNN-based flow prediction — then execute the full pipeline from raw data to trained model and export.
+Visual workflow builder for surrogate models. Drag-and-drop ML/Surrogate pipelines on a canvas — regressors, feature engineering, HP tuning, postprocessing, GNN-based flow prediction — then execute the full pipeline from raw data to trained model and export.
 
-I have read so many papers where I always learned the most by looking at the visual abstract. I want to create an environment in which one can draw such a visual abstract but also have an agent working on top, replacing costly HP tuning with an agent-based approach using just a few evaluations. Furthermore, I want to develop agent-based surrogate modeling using reliable building blocks.
-
-This is a demo version — want to know the current status? Just reach out to me on LinkedIn → Bernhard Einberger.
+I have read many papers where I always learned the most by looking at the visual abstract - I am a strongly visual learning type . I want to create an environment in which one can draw such a visual abstract with nice features such as an agent working on top, replacing costly HP tuning with an agent-based approach using just a few evaluations. Furthermore, I want to develop agent-based surrogate modeling using reliable building blocks.
 
 Built with React / React Flow (frontend) and Python / FastAPI (backend).
 
-## Screenshot
+## Comparing Scaler Methods on MLPs
 
-![SurroMod Interface](./doc/pics/interface_003.png)
+![SurroMod Interface](./doc/pics/scaler_comparison.png)
 
-## Video of simple Neural Network (MLP) Training on concrete dataset comparing two feature engineering approaches
+## 3D Field prediction pipeline 
 
-![Workflow](./doc/pics/workflow_simple_003.gif)
+![Workflow](./doc/pics/3d_field_prediction.png)
 
-## Video of advanced workflow — concept
+## Youtube Video showing Agent based HP Tuning (click on picture below to open)
 
-![Workflow](./doc/pics/workflow_full_002.gif)
+[![Video-Titel](./doc/pics/agent_based_hp_tuning)](https://www.youtube.com/watch?v=hb4ld41qEW0)
 
 ## Quick Start
 
